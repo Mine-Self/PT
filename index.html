@@ -6,7 +6,7 @@
 <title>מנהל פרויקטים - מכשור רפואי</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0f6cbd">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
   :root{
     --bg:#0b1220; --panel:#111a2e; --panel2:#182545; --border:#26355c;
@@ -603,7 +603,7 @@ function updateBanner(){
 function fireNotification(item, project){
   const title = `⏰ ${item.title}`;
   const body = `פרויקט: ${project.name}`;
-  const opts = { body, icon:'icons/icon-192.png', badge:'icons/icon-192.png', tag: item.id };
+  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: item.id };
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
   } else if('Notification' in window && Notification.permission==='granted'){
