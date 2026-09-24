@@ -13,6 +13,10 @@
     --text:#e8edf9; --muted:#93a1c4; --accent:#3d8bff; --accent2:#0f6cbd;
     --green:#2ecc71; --yellow:#f1c40f; --red:#e74c3c; --radius:14px;
   }
+  :root[data-theme="light"]{
+    --bg:#f2f4fa; --panel:#ffffff; --panel2:#eef1f8; --border:#dbe1f0;
+    --text:#101426; --muted:#5b6584; --accent:#2f6fe4; --accent2:#0f6cbd;
+  }
   *{box-sizing:border-box;}
   html,body{height:100%;}
   body{
@@ -31,9 +35,10 @@
   .tab{padding:7px 14px; border-radius:999px; background:var(--panel2); color:var(--muted); font-size:13px; white-space:nowrap; cursor:pointer; border:1px solid var(--border);}
   .tab.active{background:var(--accent2); color:#fff; border-color:var(--accent2);}
   main{padding:12px 12px 90px;}
-  .banner{background:#3a2210; border:1px solid #8a4b12; color:#ffcf8a; border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; font-size:13px;}
+  .banner{background:#3a2210; border:1px solid #8a4b12; color:#ffcf8a; border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; font-size:13px; cursor:pointer;}
   .banner.empty{display:none;}
   .card{background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:12px; margin-bottom:10px;}
+  .card.highlight{outline:2px solid var(--accent); outline-offset:2px;}
   .card h3{margin:0 0 4px; font-size:15px;}
   .muted{color:var(--muted); font-size:12px;}
   .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
@@ -49,6 +54,7 @@
   label{font-size:12px; color:var(--muted); display:block; margin:8px 0 3px;}
   .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center; z-index:50;}
   .modal{background:var(--panel); border-radius:16px 16px 0 0; width:100%; max-width:520px; max-height:88vh; overflow-y:auto; padding:16px; padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));}
+  .modal.center{border-radius:16px; margin-bottom:auto; margin-top:15vh;}
   .modal h2{margin-top:0; font-size:16px;}
   .chip{display:inline-flex; align-items:center; gap:5px; background:var(--panel2); border:1px solid var(--border); border-radius:999px; padding:3px 9px; font-size:12px; margin:2px;}
   .chip button{background:none; border:none; color:var(--muted); cursor:pointer; font-size:13px; padding:0;}
@@ -63,7 +69,13 @@
   .item-meta{font-size:11px; color:var(--muted); margin-top:2px;}
   .icon-btn{background:none; border:none; color:var(--muted); font-size:16px; cursor:pointer; padding:3px 6px;}
   .empty-state{text-align:center; color:var(--muted); padding:40px 10px; font-size:14px;}
-  .footer-note{font-size:11px; color:var(--muted); text-align:center; margin-top:18px; line-height:1.6;}
+  .footer-note{font-size:11px; color:var(--muted); text-align:right; line-height:1.6;}
+  .subtabs{display:flex; gap:6px; margin-bottom:10px;}
+  .subtab{padding:6px 12px; border-radius:999px; background:var(--panel2); color:var(--muted); font-size:12px; cursor:pointer; border:1px solid var(--border);}
+  .subtab.active{background:var(--accent); color:#fff; border-color:var(--accent);}
+  .reminder-row{display:flex; gap:6px; align-items:center; margin-top:6px;}
+  .reminder-row input{flex:1;}
+  pre.mono{background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px; font-size:11px; overflow-x:auto; direction:ltr; text-align:left; white-space:pre-wrap;}
 </style>
 </head>
 <body>
@@ -82,22 +94,23 @@
 <button class="fab" id="fab">+</button>
 
 <script>
-/* ---------- Data layer ---------- */
-const STORE_KEY = 'pm_data_v1';
+/* ================= Data layer ================= */
+const STORE_KEY = 'pm_data_v2';
 function loadData(){
   try{
     const raw = localStorage.getItem(STORE_KEY);
     if(raw) return JSON.parse(raw);
   }catch(e){}
-  return { projects: [], contacts: [] };
+  return { projects: [], contacts: [], companies: [] };
 }
 let DATA = loadData();
+if(!DATA.companies) DATA.companies = [];
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
 /* ---------- Item helpers (tasks/subtasks/sub-subtasks share shape) ---------- */
 function newItem(title){
-  return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], children:[], lastNotified:'' };
+  return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], children:[], lastNotified:'', reminders:[] };
 }
 function newProject(name){
   return { id: uid(), name, status:'active', notes:'', contactIds:[], tasks:[] };
@@ -117,10 +130,57 @@ function removeItem(list, id){
   for(const it of list){ if(removeItem(it.children||[], id)) return true; }
   return false;
 }
+function findItemAnywhere(id){
+  for(const p of DATA.projects){
+    const it = findItem(p.tasks, id);
+    if(it) return {item: it, project: p};
+  }
+  return null;
+}
 
-/* ---------- Navigation state ---------- */
+/* ---------- Companies helpers ---------- */
+function companyChainName(c){
+  if(!c) return '';
+  let chain=[c.name]; let cur=c; let guard=0;
+  while(cur.parentId && guard<10){
+    const parent = DATA.companies.find(x=>x.id===cur.parentId);
+    if(!parent) break;
+    chain.push(parent.name);
+    cur = parent; guard++;
+  }
+  return chain.join(' ⟵ ');
+}
+function isDescendant(companyId, potentialAncestorId){
+  let cur = DATA.companies.find(c=>c.id===companyId);
+  let guard=0;
+  while(cur && cur.parentId && guard<10){
+    if(cur.parentId===potentialAncestorId) return true;
+    cur = DATA.companies.find(c=>c.id===cur.parentId);
+    guard++;
+  }
+  return false;
+}
+
+/* ================= Theme ================= */
+function getThemeSetting(){ return localStorage.getItem('pm_theme') || 'auto'; }
+function applyTheme(){
+  const setting = getThemeSetting();
+  let effective = setting;
+  if(setting==='auto'){
+    effective = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-theme', effective);
+}
+applyTheme();
+if(window.matchMedia){
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()=>{ if(getThemeSetting()==='auto') applyTheme(); });
+}
+
+/* ================= Navigation state ================= */
 let currentTab = 'projects';
 let currentProjectId = null;
+let contactsSubTab = 'people'; // 'people' | 'companies'
+let highlightItemId = null;
 
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=>{
@@ -135,23 +195,24 @@ document.querySelectorAll('.tab').forEach(t=>{
 document.getElementById('fab').addEventListener('click', ()=>{
   if(currentTab==='projects' && !currentProjectId) openProjectModal();
   else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1});
-  else if(currentTab==='contacts') openContactModal();
+  else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
+  else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
 });
 
-/* ---------- Rendering ---------- */
+/* ================= Rendering ================= */
 const main = document.getElementById('main');
 
 function render(){
   updateBanner();
+  document.getElementById('fab').style.display = (currentTab==='settings' || currentTab==='overdue') ? 'none' : 'block';
   if(currentTab==='projects'){
-    document.getElementById('fab').style.display='block';
     if(currentProjectId) renderProjectDetail(currentProjectId);
     else renderProjectsList();
   } else if(currentTab==='contacts'){
-    document.getElementById('fab').style.display='block';
-    renderContacts();
+    renderContactsRoot();
+  } else if(currentTab==='overdue'){
+    renderOverdueScreen();
   } else {
-    document.getElementById('fab').style.display='none';
     renderSettings();
   }
 }
@@ -166,7 +227,7 @@ function renderProjectsList(){
     return `<div class="card" data-open="${p.id}">
       <div class="item-head">
         <h3>${esc(p.name)}</h3>
-        <span class="muted">${p.status}</span>
+        <span class="muted">${statusLabel(p.status)}</span>
       </div>
       <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
     </div>`;
@@ -175,6 +236,7 @@ function renderProjectsList(){
     el.addEventListener('click', ()=>{ currentProjectId = el.dataset.open; render(); });
   });
 }
+function statusLabel(s){ return {active:'פעיל',won:'נסגר בהצלחה',lost:'נפסל',paused:'בהמתנה'}[s] || s; }
 
 function countStatus(list){
   let total=0, done=0, overdue=0;
@@ -201,7 +263,7 @@ function renderProjectDetail(pid){
         <button class="icon-btn" id="editProjBtn">✏️</button>
       </div>
       ${p.notes?`<div class="muted">${esc(p.notes)}</div>`:''}
-      <div style="margin-top:6px;">${renderContactChips(p.contactIds, p, null)}</div>
+      <div style="margin-top:6px;">${renderContactChips(p.contactIds)}</div>
       <button class="btn small secondary" id="addProjContactBtn" style="margin-top:6px;">+ איש קשר לפרויקט</button>
     </div>
     <div id="taskTree"></div>
@@ -209,23 +271,32 @@ function renderProjectDetail(pid){
   `;
   document.getElementById('backBtn').onclick = ()=>{ currentProjectId=null; render(); };
   document.getElementById('editProjBtn').onclick = ()=> openProjectModal(p);
-  document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, ()=>{save(); render();});
+  document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, (ids)=>{ p.contactIds=ids; save(); render();});
   const tree = document.getElementById('taskTree');
-  tree.innerHTML = p.tasks.map(t=>renderItemHtml(t,1,p)).join('');
+  tree.innerHTML = p.tasks.map(t=>renderItemHtml(t,1)).join('');
   wireItemEvents(p);
+  if(highlightItemId){
+    const el = tree.querySelector(`[data-item="${highlightItemId}"]`);
+    if(el){
+      el.style.outline = '2px solid var(--accent)'; el.style.borderRadius='10px';
+      setTimeout(()=> el.scrollIntoView({behavior:'smooth', block:'center'}), 80);
+    }
+    highlightItemId = null;
+  }
 }
 
-function renderItemHtml(item, depth, project){
+function renderItemHtml(item, depth){
   const statusClass = item.status==='done' ? 'status-done' : (item.due && new Date(item.due) < new Date() ? 'status-overdue' : 'status-open');
   const label = ['','משימה','תת-משימה','תת-תת-משימה'][depth] || 'פריט';
+  const remCount = (item.reminders||[]).length;
   return `<div class="tree-item" data-item="${item.id}">
     <div class="item-head">
       <div>
         <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-toggle-status="${item.id}">
           <span class="status-dot"></span>${esc(item.title)}
         </span>
-        <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}</div>
-        <div>${renderContactChips(item.contactIds, item, null)}</div>
+        <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
+        <div>${renderContactChips(item.contactIds)}</div>
       </div>
       <div class="row" style="gap:2px;">
         <button class="icon-btn" data-edit="${item.id}">✏️</button>
@@ -233,11 +304,11 @@ function renderItemHtml(item, depth, project){
       </div>
     </div>
     ${depth<3?`<button class="btn small secondary" style="margin-top:6px;" data-addchild="${item.id}">+ הוסף ${['','תת-משימה','תת-תת-משימה'][depth]}</button>`:''}
-    ${(item.children||[]).map(c=>renderItemHtml(c, depth+1, project)).join('')}
+    ${(item.children||[]).map(c=>renderItemHtml(c, depth+1)).join('')}
   </div>`;
 }
 
-function renderContactChips(ids, owner, _unused){
+function renderContactChips(ids){
   if(!ids || ids.length===0) return '';
   return ids.map(cid=>{
     const c = DATA.contacts.find(x=>x.id===cid);
@@ -286,58 +357,199 @@ function getDepth(list, id, d=1){
   return 0;
 }
 
-/* ---------- Contacts tab ---------- */
-function renderContacts(){
-  if(DATA.contacts.length===0){
-    main.innerHTML = `<div class="empty-state">אין אנשי קשר עדיין.<br>לחץ על + כדי להוסיף.</div>`;
-    return;
-  }
-  main.innerHTML = DATA.contacts.map(c=>`
-    <div class="card">
-      <div class="item-head">
-        <h3>👤 ${esc(c.name)}</h3>
-        <div class="row" style="gap:2px;">
-          <button class="icon-btn" data-editc="${c.id}">✏️</button>
-          <button class="icon-btn" data-delc="${c.id}">🗑️</button>
-        </div>
-      </div>
-      <div class="muted">${esc(c.role||'')}</div>
-      <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
-      ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
-    </div>
-  `).join('');
-  main.querySelectorAll('[data-editc]').forEach(el=>{
-    el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
-  });
-  main.querySelectorAll('[data-delc]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      if(confirm('למחוק איש קשר זה?')){
-        DATA.contacts = DATA.contacts.filter(c=>c.id!==el.dataset.delc);
-        save(); render();
+/* ================= Overdue screen ================= */
+function getOverdueList(){
+  const now = new Date();
+  const out = [];
+  for(const p of DATA.projects){
+    (function walk(items, depth){
+      for(const it of items){
+        if(it.status!=='done' && it.due && new Date(it.due) < now){
+          out.push({item: it, project: p, depth});
+        }
+        walk(it.children||[], depth+1);
       }
+    })(p.tasks, 1);
+  }
+  out.sort((a,b)=> new Date(a.item.due) - new Date(b.item.due));
+  return out;
+}
+
+function renderOverdueScreen(){
+  const list = getOverdueList();
+  main.innerHTML = `
+    <button class="btn secondary small" id="backBtn">→ חזרה</button>
+    <h2 style="font-size:16px; margin:12px 0 6px;">⚠️ משימות באיחור (${list.length})</h2>
+    ${list.length===0?'<div class="empty-state">אין משימות באיחור כרגע 🎉</div>':''}
+    ${list.map(({item,project,depth})=>`
+      <div class="card" data-goto-proj="${project.id}" data-goto-item="${item.id}">
+        <div class="item-head">
+          <h3>${esc(item.title)}</h3>
+          <span class="muted">${['','משימה','תת-משימה','תת-תת-משימה'][depth]}</span>
+        </div>
+        <div class="muted">פרויקט: ${esc(project.name)}</div>
+        <div class="muted" style="color:var(--red)">⏰ היעד היה: ${fmtDate(item.due)}</div>
+      </div>
+    `).join('')}
+  `;
+  document.getElementById('backBtn').onclick = ()=>{ currentTab='projects'; currentProjectId=null; render(); };
+  main.querySelectorAll('[data-goto-item]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      currentTab='projects';
+      currentProjectId = el.dataset.gotoProj;
+      highlightItemId = el.dataset.gotoItem;
+      document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab==='projects'));
+      render();
     });
   });
 }
 
-/* ---------- Settings / backup / notifications ---------- */
+/* ================= Contacts + Companies tab ================= */
+function renderContactsRoot(){
+  main.innerHTML = `
+    <div class="subtabs">
+      <div class="subtab ${contactsSubTab==='people'?'active':''}" id="subPeople">👤 אנשי קשר</div>
+      <div class="subtab ${contactsSubTab==='companies'?'active':''}" id="subCompanies">🏢 לקוחות/חברות</div>
+    </div>
+    <div id="subContent"></div>
+  `;
+  document.getElementById('subPeople').onclick = ()=>{ contactsSubTab='people'; render(); };
+  document.getElementById('subCompanies').onclick = ()=>{ contactsSubTab='companies'; render(); };
+  if(contactsSubTab==='people') renderContactsList();
+  else renderCompaniesList();
+}
+
+function renderContactsList(){
+  const wrap = document.getElementById('subContent');
+  wrap.innerHTML = `
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn small secondary" id="expPeople">ייצוא CSV</button>
+      <button class="btn small secondary" id="impPeople">ייבוא CSV</button>
+      <input type="file" id="impPeopleFile" accept=".csv,text/csv" style="display:none;">
+    </div>
+    <div id="peopleList"></div>
+  `;
+  const list = document.getElementById('peopleList');
+  if(DATA.contacts.length===0){
+    list.innerHTML = `<div class="empty-state">אין אנשי קשר עדיין.<br>לחץ על + כדי להוסיף.</div>`;
+  } else {
+    list.innerHTML = DATA.contacts.map(c=>{
+      const co = DATA.companies.find(x=>x.id===c.companyId);
+      return `<div class="card">
+        <div class="item-head">
+          <h3>👤 ${esc(c.name)}</h3>
+          <div class="row" style="gap:2px;">
+            <button class="icon-btn" data-editc="${c.id}">✏️</button>
+            <button class="icon-btn" data-delc="${c.id}">🗑️</button>
+          </div>
+        </div>
+        ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
+        ${co?`<div class="muted">🏢 ${esc(companyChainName(co))}</div>`:''}
+        <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
+        ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-editc]').forEach(el=>{
+      el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
+    });
+    list.querySelectorAll('[data-delc]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        if(confirm('למחוק איש קשר זה?')){
+          DATA.contacts = DATA.contacts.filter(c=>c.id!==el.dataset.delc);
+          save(); render();
+        }
+      });
+    });
+  }
+  document.getElementById('expPeople').onclick = exportContactsCsv;
+  document.getElementById('impPeople').onclick = ()=> document.getElementById('impPeopleFile').click();
+  document.getElementById('impPeopleFile').onchange = (e)=> handleImportFile(e, importContactsCsv);
+}
+
+function renderCompaniesList(){
+  const wrap = document.getElementById('subContent');
+  wrap.innerHTML = `
+    <div class="row" style="margin-bottom:8px;">
+      <button class="btn small secondary" id="expCo">ייצוא CSV</button>
+      <button class="btn small secondary" id="impCo">ייבוא CSV</button>
+      <input type="file" id="impCoFile" accept=".csv,text/csv" style="display:none;">
+    </div>
+    <div class="card footer-note">
+      פורמט ייבוא: קובץ CSV עם כותרות: <b>name, parent, phone, address, website, notes</b>.
+      <br>name = שם הלקוח/חברה (חובה). parent = שם החברה-האם אם קיימת (השאר ריק אם אין). שאר השדות אופציונליים.
+    </div>
+    <div id="coList"></div>
+  `;
+  const list = document.getElementById('coList');
+  if(DATA.companies.length===0){
+    list.innerHTML = `<div class="empty-state">אין עדיין לקוחות/חברות.<br>לחץ על + כדי להוסיף.</div>`;
+  } else {
+    list.innerHTML = DATA.companies.map(co=>`
+      <div class="card">
+        <div class="item-head">
+          <h3>🏢 ${esc(co.name)}</h3>
+          <div class="row" style="gap:2px;">
+            <button class="icon-btn" data-editco="${co.id}">✏️</button>
+            <button class="icon-btn" data-delco="${co.id}">🗑️</button>
+          </div>
+        </div>
+        ${co.parentId?`<div class="muted">שייך ל: ${esc(companyChainName(DATA.companies.find(x=>x.id===co.parentId)))}</div>`:''}
+        <div class="muted">${co.phone?`📞 ${esc(co.phone)} `:''}${co.website?`🌐 ${esc(co.website)}`:''}</div>
+        ${co.address?`<div class="muted">📍 ${esc(co.address)}</div>`:''}
+        ${co.notes?`<div class="muted">${esc(co.notes)}</div>`:''}
+      </div>
+    `).join('');
+    list.querySelectorAll('[data-editco]').forEach(el=>{
+      el.addEventListener('click', ()=> openCompanyModal(DATA.companies.find(c=>c.id===el.dataset.editco)));
+    });
+    list.querySelectorAll('[data-delco]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const co = DATA.companies.find(c=>c.id===el.dataset.delco);
+        const used = DATA.contacts.some(c=>c.companyId===co.id) || DATA.companies.some(c=>c.parentId===co.id);
+        if(used && !confirm('חברה זו משויכת לאנשי קשר או לחברות-בת. מחיקה תסיר את השיוך. להמשיך?')) return;
+        if(!used && !confirm('למחוק לקוח/חברה זו?')) return;
+        DATA.companies = DATA.companies.filter(c=>c.id!==co.id);
+        DATA.contacts.forEach(c=>{ if(c.companyId===co.id) c.companyId=''; });
+        DATA.companies.forEach(c=>{ if(c.parentId===co.id) c.parentId=''; });
+        save(); render();
+      });
+    });
+  }
+  document.getElementById('expCo').onclick = exportCompaniesCsv;
+  document.getElementById('impCo').onclick = ()=> document.getElementById('impCoFile').click();
+  document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
+}
+
+/* ================= Settings ================= */
 function renderSettings(){
   const permState = ('Notification' in window) ? Notification.permission : 'unsupported';
+  const theme = getThemeSetting();
   main.innerHTML = `
+    <div class="card">
+      <h3>🎨 תצוגה</h3>
+      <label>מצב יום/לילה</label>
+      <select id="themeSel">
+        <option value="auto" ${theme==='auto'?'selected':''}>אוטומטי (לפי הגדרות המכשיר)</option>
+        <option value="light" ${theme==='light'?'selected':''}>יום (בהיר)</option>
+        <option value="dark" ${theme==='dark'?'selected':''}>לילה (כהה)</option>
+      </select>
+    </div>
     <div class="card">
       <h3>🔔 התראות</h3>
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
-      <div class="footer-note" style="text-align:right; margin-top:8px;">
+      <div class="footer-note" style="margin-top:8px;">
         התראות מוצגות כאשר האפליקציה פתוחה או ברקע (כל עוד הדפדפן פעיל).
         בהתאם למגבלות אנדרואיד, ייתכן שהתראה לא תופיע אם הדפדפן/אפליקציה נסגרו לגמרי לאורך זמן רב.
+        לחיצה על התראה תוביל ישירות למשימה/תת-משימה הרלוונטית.
       </div>
     </div>
     <div class="card">
-      <h3>💾 גיבוי ושחזור</h3>
+      <h3>💾 גיבוי ושחזור (הכל - פרויקטים, אנשי קשר, חברות)</h3>
       <div class="muted">כל המידע נשמר מקומית בטלפון בלבד. מומלץ לגבות מדי פעם לקובץ.</div>
       <div class="row" style="margin-top:8px;">
-        <button class="btn" id="exportBtn">ייצוא גיבוי (JSON)</button>
-        <button class="btn secondary" id="importBtn">ייבוא גיבוי</button>
+        <button class="btn" id="exportBtn">ייצוא גיבוי מלא (JSON)</button>
+        <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
       </div>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
     </div>
@@ -346,9 +558,13 @@ function renderSettings(){
       <button class="btn danger" id="resetBtn">מחיקת כל המידע</button>
     </div>
   `;
+  document.getElementById('themeSel').onchange = (e)=>{
+    localStorage.setItem('pm_theme', e.target.value);
+    applyTheme();
+  };
   document.getElementById('askPerm').onclick = async ()=>{
     if(!('Notification' in window)){ alert('הדפדפן לא תומך בהתראות'); return; }
-    const p = await Notification.requestPermission();
+    await Notification.requestPermission();
     render();
   };
   document.getElementById('exportBtn').onclick = ()=>{
@@ -367,6 +583,7 @@ function renderSettings(){
       try{
         const parsed = JSON.parse(reader.result);
         if(!parsed.projects || !parsed.contacts) throw new Error('bad format');
+        if(!parsed.companies) parsed.companies = [];
         if(confirm('הייבוא יחליף את כל המידע הקיים. להמשיך?')){
           DATA = parsed; save(); render();
         }
@@ -375,8 +592,8 @@ function renderSettings(){
     reader.readAsText(file);
   };
   document.getElementById('resetBtn').onclick = ()=>{
-    if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות ואנשי הקשר. בטוח?')){
-      DATA = {projects:[], contacts:[]}; save(); render();
+    if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות, אנשי הקשר והחברות. בטוח?')){
+      DATA = {projects:[], contacts:[], companies:[]}; save(); render();
     }
   };
 }
@@ -384,11 +601,11 @@ function permLabel(s){
   return {granted:'מאושר ✅', denied:'נדחה ❌', default:'טרם נשאל', unsupported:'לא נתמך'}[s] || s;
 }
 
-/* ---------- Modals ---------- */
-function openModalEl(html){
+/* ================= Modals ================= */
+function openModalEl(html, opts){
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `<div class="modal">${html}</div>`;
+  bg.innerHTML = `<div class="modal ${opts&&opts.center?'center':''}">${html}</div>`;
   bg.addEventListener('click', (e)=>{ if(e.target===bg) bg.remove(); });
   document.body.appendChild(bg);
   return bg;
@@ -402,7 +619,7 @@ function openProjectModal(project){
     <input id="mName" value="${isEdit?esc(project.name):''}">
     <label>סטטוס</label>
     <select id="mStatus">
-      ${['active','won','lost','paused'].map(s=>`<option value="${s}" ${isEdit&&project.status===s?'selected':''}>${{active:'פעיל',won:'נסגר בהצלחה',lost:'נפסל',paused:'בהמתנה'}[s]}</option>`).join('')}
+      ${['active','won','lost','paused'].map(s=>`<option value="${s}" ${isEdit&&project.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
     </select>
     <label>הערות</label>
     <textarea id="mNotes" rows="3">${isEdit?esc(project.notes||''):''}</textarea>
@@ -437,9 +654,8 @@ function openProjectModal(project){
 
 function openItemModal({item, parentList, depth, project}){
   const isEdit = !!item;
-  const target = isEdit ? item : null;
-  const contactChipsId = 'mContactsWrap';
   let workingContactIds = isEdit ? [...(item.contactIds||[])] : [];
+  let workingReminders = isEdit ? (item.reminders||[]).map(r=>({...r})) : [];
   const bg = openModalEl(`
     <h2>${isEdit?'עריכת פריט':'פריט חדש'}</h2>
     <label>כותרת</label>
@@ -448,12 +664,15 @@ function openItemModal({item, parentList, depth, project}){
     <textarea id="mDesc" rows="2">${isEdit?esc(item.desc||''):''}</textarea>
     <label>תאריך ושעת יעד</label>
     <input id="mDue" type="datetime-local" value="${isEdit&&item.due?item.due:''}">
-    <label>תזכורת חוזרת</label>
+    <label>תזכורת חוזרת (על תאריך היעד)</label>
     <select id="mRec">
       ${['none','daily','weekly','monthly'].map(r=>`<option value="${r}" ${isEdit&&item.recurrence===r?'selected':''}>${recLabel(r)}</option>`).join('')}
     </select>
+    <label>תזכורות נוספות (ללא הגבלה - תאריכים ושעות משלך)</label>
+    <div id="remList"></div>
+    <button class="btn small secondary" id="addRem" style="margin-top:4px;">+ הוסף תזכורת</button>
     <label>אנשי קשר</label>
-    <div id="${contactChipsId}"></div>
+    <div id="mContactsWrap"></div>
     <button class="btn small secondary" id="mAddContact" style="margin-top:4px;">+ הוסף איש קשר</button>
     <div class="row" style="margin-top:14px;">
       <button class="btn" id="mSave">שמירה</button>
@@ -461,8 +680,27 @@ function openItemModal({item, parentList, depth, project}){
       ${isEdit?'<button class="btn danger" id="mDelete">מחיקה</button>':''}
     </div>
   `);
+  function renderReminders(){
+    bg.querySelector('#remList').innerHTML = workingReminders.map((r,i)=>`
+      <div class="reminder-row">
+        <input type="datetime-local" data-rem-i="${i}" value="${r.datetime||''}">
+        <button class="icon-btn" data-rem-rm="${i}">🗑️</button>
+      </div>
+    `).join('') || '<div class="muted">אין תזכורות נוספות</div>';
+    bg.querySelectorAll('[data-rem-i]').forEach(inp=>{
+      inp.onchange = ()=>{ workingReminders[+inp.dataset.remI].datetime = inp.value; };
+    });
+    bg.querySelectorAll('[data-rem-rm]').forEach(b=>{
+      b.onclick = ()=>{ workingReminders.splice(+b.dataset.remRm,1); renderReminders(); };
+    });
+  }
+  renderReminders();
+  bg.querySelector('#addRem').onclick = ()=>{
+    workingReminders.push({id:uid(), datetime:'', notified:false});
+    renderReminders();
+  };
   function renderChips(){
-    bg.querySelector('#'+contactChipsId).innerHTML = workingContactIds.map(cid=>{
+    bg.querySelector('#mContactsWrap').innerHTML = workingContactIds.map(cid=>{
       const c = DATA.contacts.find(x=>x.id===cid);
       return c?`<span class="chip">👤 ${esc(c.name)} <button data-rm="${cid}">✕</button></span>`:'';
     }).join('') || '<span class="muted">אין אנשי קשר משויכים</span>';
@@ -481,11 +719,12 @@ function openItemModal({item, parentList, depth, project}){
     const due = bg.querySelector('#mDue').value;
     const rec = bg.querySelector('#mRec').value;
     const desc = bg.querySelector('#mDesc').value;
+    const cleanReminders = workingReminders.filter(r=>r.datetime);
     if(isEdit){
-      item.title=title; item.desc=desc; item.due=due; item.recurrence=rec; item.contactIds=workingContactIds;
+      item.title=title; item.desc=desc; item.due=due; item.recurrence=rec; item.contactIds=workingContactIds; item.reminders=cleanReminders;
     } else {
       const it = newItem(title);
-      it.desc=desc; it.due=due; it.recurrence=rec; it.contactIds=workingContactIds;
+      it.desc=desc; it.due=due; it.recurrence=rec; it.contactIds=workingContactIds; it.reminders=cleanReminders;
       parentList.push(it);
     }
     save(); bg.remove(); render();
@@ -506,8 +745,13 @@ function openContactModal(contact){
     <h2>${isEdit?'עריכת איש קשר':'איש קשר חדש'}</h2>
     <label>שם</label>
     <input id="cName" value="${isEdit?esc(contact.name):''}">
-    <label>תפקיד / חברה</label>
+    <label>תפקיד</label>
     <input id="cRole" value="${isEdit?esc(contact.role||''):''}">
+    <label>לקוח / חברה</label>
+    <div class="row">
+      <select id="cCompany" style="flex:1;"></select>
+      <button class="btn small secondary" id="cAddCompany" type="button">+ חדש</button>
+    </div>
     <label>טלפון</label>
     <input id="cPhone" value="${isEdit?esc(contact.phone||''):''}">
     <label>אימייל</label>
@@ -519,18 +763,82 @@ function openContactModal(contact){
       <button class="btn secondary" id="cCancel">ביטול</button>
     </div>
   `);
+  function fillCompanySelect(selectedId){
+    const sel = bg.querySelector('#cCompany');
+    sel.innerHTML = `<option value="">ללא</option>` + DATA.companies.map(co=>
+      `<option value="${co.id}" ${selectedId===co.id?'selected':''}>${esc(companyChainName(co))}</option>`
+    ).join('');
+  }
+  fillCompanySelect(isEdit?contact.companyId:'');
+  bg.querySelector('#cAddCompany').onclick = ()=>{
+    openCompanyModal(null, (newCo)=>{ fillCompanySelect(newCo.id); });
+  };
   bg.querySelector('#cCancel').onclick = ()=> bg.remove();
   bg.querySelector('#cSave').onclick = ()=>{
     const name = bg.querySelector('#cName').value.trim();
     if(!name){ alert('נא להזין שם'); return; }
     const vals = {
-      name, role: bg.querySelector('#cRole').value, phone: bg.querySelector('#cPhone').value,
-      email: bg.querySelector('#cEmail').value, notes: bg.querySelector('#cNotes').value
+      name, role: bg.querySelector('#cRole').value, companyId: bg.querySelector('#cCompany').value,
+      phone: bg.querySelector('#cPhone').value, email: bg.querySelector('#cEmail').value,
+      notes: bg.querySelector('#cNotes').value
     };
     if(isEdit) Object.assign(contact, vals);
     else DATA.contacts.push({id: uid(), ...vals});
     save(); bg.remove(); render();
   };
+}
+
+function openCompanyModal(company, onSaved){
+  const isEdit = !!company;
+  const bg = openModalEl(`
+    <h2>${isEdit?'עריכת לקוח/חברה':'לקוח/חברה חדש/ה'}</h2>
+    <label>שם</label>
+    <input id="coName" value="${isEdit?esc(company.name):''}">
+    <label>שייך ל... (חברה-אם, אופציונלי)</label>
+    <select id="coParent"></select>
+    <label>טלפון</label>
+    <input id="coPhone" value="${isEdit?esc(company.phone||''):''}">
+    <label>כתובת / אזור</label>
+    <input id="coAddress" value="${isEdit?esc(company.address||''):''}">
+    <label>אתר אינטרנט</label>
+    <input id="coWebsite" value="${isEdit?esc(company.website||''):''}">
+    <label>הערות</label>
+    <textarea id="coNotes" rows="2">${isEdit?esc(company.notes||''):''}</textarea>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" id="coSave">שמירה</button>
+      <button class="btn secondary" id="coCancel">ביטול</button>
+      ${isEdit?'<button class="btn danger" id="coDelete">מחיקה</button>':''}
+    </div>
+  `);
+  const parentSel = bg.querySelector('#coParent');
+  parentSel.innerHTML = `<option value="">ללא</option>` + DATA.companies
+    .filter(co => !isEdit || (co.id!==company.id && !isDescendant(co.id, company.id)))
+    .map(co=>`<option value="${co.id}" ${isEdit&&company.parentId===co.id?'selected':''}>${esc(companyChainName(co))}</option>`).join('');
+  bg.querySelector('#coCancel').onclick = ()=> bg.remove();
+  bg.querySelector('#coSave').onclick = ()=>{
+    const name = bg.querySelector('#coName').value.trim();
+    if(!name){ alert('נא להזין שם'); return; }
+    const vals = {
+      name, parentId: parentSel.value, phone: bg.querySelector('#coPhone').value,
+      address: bg.querySelector('#coAddress').value, website: bg.querySelector('#coWebsite').value,
+      notes: bg.querySelector('#coNotes').value
+    };
+    let result;
+    if(isEdit){ Object.assign(company, vals); result = company; }
+    else { result = {id: uid(), ...vals}; DATA.companies.push(result); }
+    save(); bg.remove(); render();
+    if(onSaved) onSaved(result);
+  };
+  if(isEdit){
+    bg.querySelector('#coDelete').onclick = ()=>{
+      if(confirm('למחוק לקוח/חברה זו?')){
+        DATA.companies = DATA.companies.filter(c=>c.id!==company.id);
+        DATA.contacts.forEach(c=>{ if(c.companyId===company.id) c.companyId=''; });
+        DATA.companies.forEach(c=>{ if(c.parentId===company.id) c.parentId=''; });
+        save(); bg.remove(); render();
+      }
+    };
+  }
 }
 
 function openAttachContactModal(currentIds, onDone){
@@ -544,29 +852,23 @@ function openAttachContactModal(currentIds, onDone){
       <button class="btn secondary" id="attachCancel">ביטול</button>
     </div>
   `);
-  function draw(){
-    bg.querySelector('#attachList').innerHTML = DATA.contacts.map(c=>`
-      <label class="row" style="justify-content:flex-start; cursor:pointer;">
-        <input type="checkbox" style="width:auto;" data-cid="${c.id}" ${working.includes(c.id)?'checked':''}>
-        ${esc(c.name)} <span class="muted">${esc(c.role||'')}</span>
-      </label>
-    `).join('');
-    bg.querySelectorAll('[data-cid]').forEach(cb=>{
-      cb.onchange = ()=>{
-        if(cb.checked) working.push(cb.dataset.cid);
-        else working = working.filter(id=>id!==cb.dataset.cid);
-      };
-    });
-  }
-  draw();
+  bg.querySelector('#attachList').innerHTML = DATA.contacts.map(c=>`
+    <label class="row" style="justify-content:flex-start; cursor:pointer;">
+      <input type="checkbox" style="width:auto;" data-cid="${c.id}" ${working.includes(c.id)?'checked':''}>
+      ${esc(c.name)} <span class="muted">${esc(c.role||'')}</span>
+    </label>
+  `).join('');
+  bg.querySelectorAll('[data-cid]').forEach(cb=>{
+    cb.onchange = ()=>{
+      if(cb.checked) working.push(cb.dataset.cid);
+      else working = working.filter(id=>id!==cb.dataset.cid);
+    };
+  });
   bg.querySelector('#attachCancel').onclick = ()=> bg.remove();
-  bg.querySelector('#attachSave').onclick = ()=>{
-    onDone(working);
-    bg.remove();
-  };
+  bg.querySelector('#attachSave').onclick = ()=>{ onDone(working); bg.remove(); };
 }
 
-/* ---------- Notifications engine ---------- */
+/* ================= Notifications engine ================= */
 function collectAllItems(){
   const out = [];
   for(const p of DATA.projects){
@@ -587,11 +889,12 @@ function updateBanner(){
     else if(d - now < 1000*60*60*24) soon++;
   }
   let el = document.getElementById('globalBanner');
-  const text = overdue||soon ? `${overdue?`⚠️ ${overdue} משימות באיחור`:''}${overdue&&soon?' · ':''}${soon?`⏳ ${soon} משימות ב-24 השעות הקרובות`:''}` : '';
+  const text = overdue||soon ? `${overdue?`⚠️ ${overdue} משימות באיחור (לחץ לצפייה)`:''}${overdue&&soon?' · ':''}${soon?`⏳ ${soon} משימות ב-24 השעות הקרובות`:''}` : '';
   if(!el){
     el = document.createElement('div');
     el.id='globalBanner';
     el.className='banner';
+    el.addEventListener('click', ()=>{ currentTab='overdue'; render(); });
     document.getElementById('main').prepend(el);
   } else if(el.parentNode !== document.getElementById('main')) {
     document.getElementById('main').prepend(el);
@@ -600,14 +903,17 @@ function updateBanner(){
   el.classList.toggle('empty', !text);
 }
 
-function fireNotification(item, project){
+function fireNotification(item, project, tag){
   const title = `⏰ ${item.title}`;
   const body = `פרויקט: ${project.name}`;
-  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: item.id };
+  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: tag||item.id, data: { itemId: item.id, projectId: project.id } };
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
   } else if('Notification' in window && Notification.permission==='granted'){
-    try{ new Notification(title, opts); }catch(e){}
+    try{
+      const n = new Notification(title, opts);
+      n.onclick = ()=>{ window.focus(); navigateToItem(project.id, item.id); n.close(); };
+    }catch(e){}
   }
 }
 
@@ -631,20 +937,206 @@ function checkNotifications(){
   const now = new Date();
   let changed = false;
   for(const {item, project} of collectAllItems()){
-    if(item.status==='done' || !item.due) continue;
-    const due = new Date(item.due);
-    const alreadyNotifiedForThisDue = item.lastNotified === item.due;
-    if(due <= now && !alreadyNotifiedForThisDue){
-      fireNotification(item, project);
-      item.lastNotified = item.due;
-      if(advanceRecurrence(item)) item.lastNotified = '';
-      changed = true;
+    if(item.status==='done') continue;
+    if(item.due){
+      const due = new Date(item.due);
+      const already = item.lastNotified === item.due;
+      if(due <= now && !already){
+        fireNotification(item, project, item.id+'-due');
+        item.lastNotified = item.due;
+        if(advanceRecurrence(item)) item.lastNotified = '';
+        changed = true;
+      }
+    }
+    for(const r of (item.reminders||[])){
+      if(r.notified || !r.datetime) continue;
+      if(new Date(r.datetime) <= now){
+        fireNotification(item, project, item.id+'-'+r.id);
+        r.notified = true;
+        changed = true;
+      }
     }
   }
   if(changed){ save(); render(); }
 }
 
-/* ---------- Utils ---------- */
+/* ---------- Navigate to an item (from notification click / deep link) ---------- */
+function navigateToItem(projectId, itemId){
+  currentTab = 'projects';
+  currentProjectId = projectId;
+  highlightItemId = itemId;
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab==='projects'));
+  render();
+}
+function handleDeepLinkFromUrl(){
+  const params = new URLSearchParams(window.location.search);
+  const pid = params.get('project'), iid = params.get('item');
+  if(pid && iid){
+    navigateToItem(pid, iid);
+    history.replaceState({}, '', window.location.pathname);
+  }
+}
+navigator.serviceWorker && navigator.serviceWorker.addEventListener && navigator.serviceWorker.addEventListener('message', (evt)=>{
+  if(evt.data && evt.data.type==='NAVIGATE' && evt.data.projectId && evt.data.itemId){
+    navigateToItem(evt.data.projectId, evt.data.itemId);
+  }
+});
+
+/* ================= Overdue popup (once per app open) ================= */
+function maybeShowOverduePopup(){
+  const list = getOverdueList();
+  if(list.length===0) return;
+  const bg = openModalEl(`
+    <h2>⚠️ יש לך ${list.length} משימות באיחור</h2>
+    <div class="muted">רוצה לצפות בהן עכשיו?</div>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" id="popGo">צפייה במשימות באיחור</button>
+      <button class="btn secondary" id="popClose">סגור</button>
+    </div>
+  `, {center:true});
+  bg.querySelector('#popGo').onclick = ()=>{ bg.remove(); currentTab='overdue'; document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); render(); };
+  bg.querySelector('#popClose').onclick = ()=> bg.remove();
+}
+
+/* ================= CSV helpers ================= */
+function csvEscape(v){
+  v = (v===undefined||v===null) ? '' : String(v);
+  if(/[",\n]/.test(v)) return '"' + v.replace(/"/g,'""') + '"';
+  return v;
+}
+function toCsv(rows){
+  return rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
+}
+function parseCsv(text){
+  const rows=[]; let row=[]; let field=''; let inQuotes=false;
+  for(let i=0;i<text.length;i++){
+    const ch = text[i];
+    if(inQuotes){
+      if(ch==='"'){
+        if(text[i+1]==='"'){ field+='"'; i++; } else inQuotes=false;
+      } else field+=ch;
+    } else {
+      if(ch==='"') inQuotes=true;
+      else if(ch===','){ row.push(field); field=''; }
+      else if(ch==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+      else if(ch==='\r'){ /* skip */ }
+      else field+=ch;
+    }
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=> r.length>1 || (r.length===1 && r[0]!==''));
+}
+function downloadTextFile(filename, content){
+  const blob = new Blob(["\uFEFF"+content], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+}
+function handleImportFile(e, handler){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=> handler(reader.result);
+  reader.readAsText(file, 'UTF-8');
+  e.target.value = '';
+}
+
+function exportCompaniesCsv(){
+  const rows = [['name','parent','phone','address','website','notes']];
+  DATA.companies.forEach(co=>{
+    const parent = DATA.companies.find(p=>p.id===co.parentId);
+    rows.push([co.name, parent?parent.name:'', co.phone||'', co.address||'', co.website||'', co.notes||'']);
+  });
+  downloadTextFile('לקוחות-חברות.csv', toCsv(rows));
+}
+function importCompaniesCsv(text){
+  const rows = parseCsv(text);
+  if(rows.length<1){ alert('קובץ ריק'); return; }
+  const header = rows[0].map(h=>h.trim().toLowerCase());
+  const idx = {name:header.indexOf('name'), parent:header.indexOf('parent'), phone:header.indexOf('phone'), address:header.indexOf('address'), website:header.indexOf('website'), notes:header.indexOf('notes')};
+  if(idx.name<0){ alert('חסרה עמודת name בקובץ'); return; }
+  const dataRows = rows.slice(1).filter(r=>r[idx.name] && r[idx.name].trim());
+  // pass 1: create/find by name
+  const byName = {};
+  DATA.companies.forEach(c=> byName[c.name.trim().toLowerCase()] = c);
+  dataRows.forEach(r=>{
+    const name = r[idx.name].trim();
+    const key = name.toLowerCase();
+    let co = byName[key];
+    if(!co){
+      co = { id: uid(), name, parentId:'', phone:'', address:'', website:'', notes:'' };
+      DATA.companies.push(co); byName[key]=co;
+    }
+    if(idx.phone>=0) co.phone = r[idx.phone]||co.phone;
+    if(idx.address>=0) co.address = r[idx.address]||co.address;
+    if(idx.website>=0) co.website = r[idx.website]||co.website;
+    if(idx.notes>=0) co.notes = r[idx.notes]||co.notes;
+  });
+  // pass 2: link parents
+  if(idx.parent>=0){
+    dataRows.forEach(r=>{
+      const name = r[idx.name].trim();
+      const parentName = (r[idx.parent]||'').trim();
+      if(!parentName) return;
+      const co = byName[name.toLowerCase()];
+      let parent = byName[parentName.toLowerCase()];
+      if(!parent){
+        parent = { id: uid(), name: parentName, parentId:'', phone:'', address:'', website:'', notes:'' };
+        DATA.companies.push(parent); byName[parentName.toLowerCase()] = parent;
+      }
+      if(co && parent && co.id!==parent.id) co.parentId = parent.id;
+    });
+  }
+  save(); render();
+  alert(`יובאו/עודכנו ${dataRows.length} רשומות חברות`);
+}
+
+function exportContactsCsv(){
+  const rows = [['name','role','company','phone','email','notes']];
+  DATA.contacts.forEach(c=>{
+    const co = DATA.companies.find(x=>x.id===c.companyId);
+    rows.push([c.name, c.role||'', co?co.name:'', c.phone||'', c.email||'', c.notes||'']);
+  });
+  downloadTextFile('אנשי-קשר.csv', toCsv(rows));
+}
+function importContactsCsv(text){
+  const rows = parseCsv(text);
+  if(rows.length<1){ alert('קובץ ריק'); return; }
+  const header = rows[0].map(h=>h.trim().toLowerCase());
+  const idx = {name:header.indexOf('name'), role:header.indexOf('role'), company:header.indexOf('company'), phone:header.indexOf('phone'), email:header.indexOf('email'), notes:header.indexOf('notes')};
+  if(idx.name<0){ alert('חסרה עמודת name בקובץ'); return; }
+  const byCoName = {};
+  DATA.companies.forEach(c=> byCoName[c.name.trim().toLowerCase()] = c);
+  const dataRows = rows.slice(1).filter(r=>r[idx.name] && r[idx.name].trim());
+  const byContactName = {};
+  DATA.contacts.forEach(c=> byContactName[c.name.trim().toLowerCase()] = c);
+  dataRows.forEach(r=>{
+    const name = r[idx.name].trim();
+    let companyId = '';
+    if(idx.company>=0){
+      const coName = (r[idx.company]||'').trim();
+      if(coName){
+        let co = byCoName[coName.toLowerCase()];
+        if(!co){
+          co = { id: uid(), name: coName, parentId:'', phone:'', address:'', website:'', notes:'' };
+          DATA.companies.push(co); byCoName[coName.toLowerCase()]=co;
+        }
+        companyId = co.id;
+      }
+    }
+    const vals = {
+      role: idx.role>=0?(r[idx.role]||''):'', companyId,
+      phone: idx.phone>=0?(r[idx.phone]||''):'', email: idx.email>=0?(r[idx.email]||''):'',
+      notes: idx.notes>=0?(r[idx.notes]||''):''
+    };
+    let existing = byContactName[name.toLowerCase()];
+    if(existing) Object.assign(existing, vals);
+    else { const c = {id: uid(), name, ...vals}; DATA.contacts.push(c); byContactName[name.toLowerCase()]=c; }
+  });
+  save(); render();
+  alert(`יובאו/עודכנו ${dataRows.length} אנשי קשר`);
+}
+
+/* ================= Utils ================= */
 function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmtDate(iso){
   if(!iso) return '';
@@ -653,12 +1145,14 @@ function fmtDate(iso){
 }
 function recLabel(r){ return {none:'ללא', daily:'יומי', weekly:'שבועי', monthly:'חודשי'}[r] || r; }
 
-/* ---------- Init ---------- */
+/* ================= Init ================= */
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 render();
+handleDeepLinkFromUrl();
 checkNotifications();
+setTimeout(maybeShowOverduePopup, 400);
 setInterval(checkNotifications, 60000);
 setInterval(updateBanner, 60000);
 </script>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'proj-manager-cache-v1';
+const CACHE_NAME = 'proj-manager-cache-v2';
 const FILES_TO_CACHE = [
   './',
   './index.html',
@@ -39,14 +39,28 @@ self.addEventListener('message', (evt) => {
   }
 });
 
+// Clicking a notification: jump straight to the relevant task/subtask/sub-subtask.
 self.addEventListener('notificationclick', (evt) => {
   evt.notification.close();
+  const data = evt.notification.data || {};
+  const targetUrl = data.itemId && data.projectId
+    ? `./index.html?project=${encodeURIComponent(data.projectId)}&item=${encodeURIComponent(data.itemId)}`
+    : './index.html';
+
   evt.waitUntil(
-    self.clients.matchAll({ type: 'window' }).then((clientList) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if ('focus' in client) return client.focus();
+        if ('focus' in client) {
+          client.focus();
+          if (data.itemId && data.projectId && 'postMessage' in client) {
+            client.postMessage({ type: 'NAVIGATE', projectId: data.projectId, itemId: data.itemId });
+          } else if ('navigate' in client) {
+            client.navigate(targetUrl);
+          }
+          return;
+        }
       }
-      if (self.clients.openWindow) return self.clients.openWindow('./index.html');
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
     })
   );
 });
