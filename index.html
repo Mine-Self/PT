@@ -38,7 +38,6 @@
   .banner{background:#3a2210; border:1px solid #8a4b12; color:#ffcf8a; border-radius:var(--radius); padding:10px 12px; margin-bottom:12px; font-size:13px; cursor:pointer;}
   .banner.empty{display:none;}
   .card{background:var(--panel); border:1px solid var(--border); border-radius:var(--radius); padding:12px; margin-bottom:10px;}
-  .card.highlight{outline:2px solid var(--accent); outline-offset:2px;}
   .card h3{margin:0 0 4px; font-size:15px;}
   .muted{color:var(--muted); font-size:12px;}
   .row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
@@ -46,6 +45,7 @@
   .btn.secondary{background:var(--panel2); color:var(--text); border:1px solid var(--border);}
   .btn.danger{background:#4a1a1a; color:#ffb3b3; border:1px solid #7a2a2a;}
   .btn.small{padding:5px 9px; font-size:12px;}
+  .btn:disabled{opacity:.5; cursor:not-allowed;}
   .fab{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); left:16px; background:var(--accent); color:#fff; border:none; width:52px; height:52px; border-radius:50%; font-size:26px; box-shadow:0 4px 14px rgba(0,0,0,.4); z-index:20;}
   input,select,textarea{
     background:var(--panel2); border:1px solid var(--border); color:var(--text);
@@ -63,7 +63,7 @@
   .status-open .status-dot{background:var(--yellow);}
   .status-done .status-dot{background:var(--green);}
   .status-overdue .status-dot{background:var(--red);}
-  .item-head{display:flex; align-items:center; justify-content:space-between; gap:6px;}
+  .item-head{display:flex; align-items:flex-start; justify-content:space-between; gap:6px;}
   .item-title{font-size:14px; font-weight:600; cursor:pointer;}
   .item-title.done{text-decoration:line-through; color:var(--muted);}
   .item-meta{font-size:11px; color:var(--muted); margin-top:2px;}
@@ -73,9 +73,9 @@
   .subtabs{display:flex; gap:6px; margin-bottom:10px;}
   .subtab{padding:6px 12px; border-radius:999px; background:var(--panel2); color:var(--muted); font-size:12px; cursor:pointer; border:1px solid var(--border);}
   .subtab.active{background:var(--accent); color:#fff; border-color:var(--accent);}
-  .reminder-row{display:flex; gap:6px; align-items:center; margin-top:6px;}
+  .reminder-row{display:flex; gap:6px; align-items:center;}
   .reminder-row input{flex:1;}
-  pre.mono{background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px; font-size:11px; overflow-x:auto; direction:ltr; text-align:left; white-space:pre-wrap;}
+  .contact-link{display:block; text-align:center; margin-bottom:6px; text-decoration:none;}
 </style>
 </head>
 <body>
@@ -108,7 +108,7 @@ if(!DATA.companies) DATA.companies = [];
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
-/* ---------- Item helpers (tasks/subtasks/sub-subtasks share shape) ---------- */
+/* ---------- Item helpers ---------- */
 function newItem(title){
   return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], children:[], lastNotified:'', reminders:[] };
 }
@@ -129,13 +129,6 @@ function removeItem(list, id){
   if(i>-1){ list.splice(i,1); return true; }
   for(const it of list){ if(removeItem(it.children||[], id)) return true; }
   return false;
-}
-function findItemAnywhere(id){
-  for(const p of DATA.projects){
-    const it = findItem(p.tasks, id);
-    if(it) return {item: it, project: p};
-  }
-  return null;
 }
 
 /* ---------- Companies helpers ---------- */
@@ -161,8 +154,20 @@ function isDescendant(companyId, potentialAncestorId){
   return false;
 }
 
-/* ================= Theme ================= */
+/* ================= Preferences (device-level, not part of data backup) ================= */
 function getThemeSetting(){ return localStorage.getItem('pm_theme') || 'auto'; }
+function getWorkdays(){ try{ return JSON.parse(localStorage.getItem('pm_workdays')||'[0,1,2,3,4]'); }catch(e){ return [0,1,2,3,4]; } }
+function setWorkdays(arr){ localStorage.setItem('pm_workdays', JSON.stringify(arr)); }
+function getFirstDay(){ return parseInt(localStorage.getItem('pm_first_day')||'0',10); }
+function getExpandDefault(){ return localStorage.getItem('pm_expand_default') || 'expanded'; }
+function getGcalId(){ return localStorage.getItem('pm_gcal_id') || ''; }
+const DAY_FULL = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
+const DAY_SHORT = ['א','ב','ג','ד','ה','ו','ש'];
+function orderedDayIndices(){
+  const first = getFirstDay();
+  return first===1 ? [1,2,3,4,5,6,0] : [0,1,2,3,4,5,6];
+}
+
 function applyTheme(){
   const setting = getThemeSetting();
   let effective = setting;
@@ -179,8 +184,10 @@ if(window.matchMedia){
 /* ================= Navigation state ================= */
 let currentTab = 'projects';
 let currentProjectId = null;
-let contactsSubTab = 'people'; // 'people' | 'companies'
+let contactsSubTab = 'people';
 let highlightItemId = null;
+let collapsedIds = new Set();
+let initializedCollapse = new Set();
 
 document.querySelectorAll('.tab').forEach(t=>{
   t.addEventListener('click', ()=>{
@@ -194,9 +201,15 @@ document.querySelectorAll('.tab').forEach(t=>{
 
 document.getElementById('fab').addEventListener('click', ()=>{
   if(currentTab==='projects' && !currentProjectId) openProjectModal();
-  else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1});
+  else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1, project: findProject(currentProjectId)});
   else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
   else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
+});
+
+// Clicking any contact chip anywhere opens the contact detail popup.
+document.addEventListener('click', (e)=>{
+  const chip = e.target.closest('[data-contact-chip]');
+  if(chip){ openContactDetailModal(chip.dataset.contactChip); }
 });
 
 /* ================= Rendering ================= */
@@ -252,6 +265,28 @@ function countStatus(list){
   return {total, done, overdue};
 }
 
+function isCollapsed(item){
+  const hasChildren = (item.children||[]).length>0;
+  if(!hasChildren) return false;
+  if(!initializedCollapse.has(item.id)){
+    initializedCollapse.add(item.id);
+    if(getExpandDefault()==='collapsed') collapsedIds.add(item.id);
+  }
+  return collapsedIds.has(item.id);
+}
+function toggleCollapse(id){
+  if(collapsedIds.has(id)) collapsedIds.delete(id); else collapsedIds.add(id);
+  render();
+}
+function expandAllInProject(project){
+  (function walk(items){ items.forEach(it=>{ collapsedIds.delete(it.id); initializedCollapse.add(it.id); walk(it.children||[]); }); })(project.tasks);
+  render();
+}
+function collapseAllInProject(project){
+  (function walk(items){ items.forEach(it=>{ if((it.children||[]).length){ collapsedIds.add(it.id); initializedCollapse.add(it.id);} walk(it.children||[]); }); })(project.tasks);
+  render();
+}
+
 function renderProjectDetail(pid){
   const p = findProject(pid);
   if(!p){ currentProjectId=null; render(); return; }
@@ -266,14 +301,22 @@ function renderProjectDetail(pid){
       <div style="margin-top:6px;">${renderContactChips(p.contactIds)}</div>
       <button class="btn small secondary" id="addProjContactBtn" style="margin-top:6px;">+ איש קשר לפרויקט</button>
     </div>
+    ${p.tasks.length>0?`<div class="row" style="margin-bottom:4px;">
+      <button class="btn small secondary" id="expandAllBtn">הרחב הכל</button>
+      <button class="btn small secondary" id="collapseAllBtn">כווץ הכל</button>
+    </div>`:''}
     <div id="taskTree"></div>
     ${p.tasks.length===0?'<div class="empty-state">אין משימות. לחץ על + להוספת משימה.</div>':''}
   `;
   document.getElementById('backBtn').onclick = ()=>{ currentProjectId=null; render(); };
   document.getElementById('editProjBtn').onclick = ()=> openProjectModal(p);
   document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, (ids)=>{ p.contactIds=ids; save(); render();});
+  if(p.tasks.length>0){
+    document.getElementById('expandAllBtn').onclick = ()=> expandAllInProject(p);
+    document.getElementById('collapseAllBtn').onclick = ()=> collapseAllInProject(p);
+  }
   const tree = document.getElementById('taskTree');
-  tree.innerHTML = p.tasks.map(t=>renderItemHtml(t,1)).join('');
+  tree.innerHTML = p.tasks.map(t=>renderItemHtml(t,1,p)).join('');
   wireItemEvents(p);
   if(highlightItemId){
     const el = tree.querySelector(`[data-item="${highlightItemId}"]`);
@@ -285,26 +328,32 @@ function renderProjectDetail(pid){
   }
 }
 
-function renderItemHtml(item, depth){
+function renderItemHtml(item, depth, project){
   const statusClass = item.status==='done' ? 'status-done' : (item.due && new Date(item.due) < new Date() ? 'status-overdue' : 'status-open');
   const label = ['','משימה','תת-משימה','תת-תת-משימה'][depth] || 'פריט';
   const remCount = (item.reminders||[]).length;
+  const hasChildren = (item.children||[]).length>0;
+  const collapsed = isCollapsed(item);
   return `<div class="tree-item" data-item="${item.id}">
     <div class="item-head">
-      <div>
-        <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-toggle-status="${item.id}">
-          <span class="status-dot"></span>${esc(item.title)}
-        </span>
-        <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
-        <div>${renderContactChips(item.contactIds)}</div>
+      <div style="display:flex; gap:4px; align-items:flex-start;">
+        ${hasChildren?`<button class="icon-btn" data-toggle-collapse="${item.id}" style="padding:2px 4px;">${collapsed?'▸':'▾'}</button>`:''}
+        <div>
+          <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-toggle-status="${item.id}">
+            <span class="status-dot"></span>${esc(item.title)}
+          </span>
+          <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
+          <div>${renderContactChips(item.contactIds)}</div>
+        </div>
       </div>
       <div class="row" style="gap:2px;">
+        ${item.due?`<button class="icon-btn" data-gcal="${item.id}" title="הוסף ליומן Google">📅</button>`:''}
         <button class="icon-btn" data-edit="${item.id}">✏️</button>
         <button class="icon-btn" data-del="${item.id}">🗑️</button>
       </div>
     </div>
     ${depth<3?`<button class="btn small secondary" style="margin-top:6px;" data-addchild="${item.id}">+ הוסף ${['','תת-משימה','תת-תת-משימה'][depth]}</button>`:''}
-    ${(item.children||[]).map(c=>renderItemHtml(c, depth+1)).join('')}
+    ${(!collapsed)?(item.children||[]).map(c=>renderItemHtml(c, depth+1, project)).join(''):''}
   </div>`;
 }
 
@@ -313,7 +362,7 @@ function renderContactChips(ids){
   return ids.map(cid=>{
     const c = DATA.contacts.find(x=>x.id===cid);
     if(!c) return '';
-    return `<span class="chip">👤 ${esc(c.name)}</span>`;
+    return `<span class="chip" data-contact-chip="${cid}" style="cursor:pointer;">👤 ${esc(c.name)}</span>`;
   }).join('');
 }
 
@@ -324,6 +373,9 @@ function wireItemEvents(project){
       it.status = it.status==='done' ? 'open' : 'done';
       save(); render();
     });
+  });
+  main.querySelectorAll('[data-toggle-collapse]').forEach(el=>{
+    el.addEventListener('click', ()=> toggleCollapse(el.dataset.toggleCollapse));
   });
   main.querySelectorAll('[data-edit]').forEach(el=>{
     el.addEventListener('click', ()=>{
@@ -344,6 +396,13 @@ function wireItemEvents(project){
       const it = findItem(project.tasks, el.dataset.addchild);
       const depth = getDepth(project.tasks, it.id);
       openItemModal({parentList: it.children, depth: depth+1, project});
+    });
+  });
+  main.querySelectorAll('[data-gcal]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const it = findItem(project.tasks, el.dataset.gcal);
+      const url = gcalLink(it, project);
+      if(url) window.open(url, '_blank');
     });
   });
 }
@@ -446,6 +505,7 @@ function renderContactsList(){
         ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
         ${co?`<div class="muted">🏢 ${esc(companyChainName(co))}</div>`:''}
         <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
+        ${c.address?`<div class="muted">📍 ${esc(c.address)}</div>`:''}
         ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
       </div>`;
     }).join('');
@@ -520,10 +580,44 @@ function renderCompaniesList(){
   document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
 }
 
+/* ================= Contact detail popup (call / email / navigate) ================= */
+function openContactDetailModal(contactId){
+  const c = DATA.contacts.find(x=>x.id===contactId);
+  if(!c) return;
+  const co = DATA.companies.find(x=>x.id===c.companyId);
+  const address = c.address || (co && co.address) || '';
+  const addressIsCompany = !c.address && co && co.address;
+  const bg = openModalEl(`
+    <h2>👤 ${esc(c.name)}</h2>
+    ${c.role?`<div class="muted">${esc(c.role)}</div>`:''}
+    ${co?`<div class="muted">🏢 ${esc(companyChainName(co))}</div>`:''}
+    <div style="margin-top:10px;">
+      ${c.phone?`<a class="btn secondary contact-link" href="tel:${esc(c.phone)}">📞 חייג ל-${esc(c.phone)}</a>`:''}
+      ${c.email?`<a class="btn secondary contact-link" href="mailto:${esc(c.email)}">✉️ שלח אימייל</a>`:''}
+      ${address?`
+        <div class="muted" style="margin:6px 0 2px;">📍 ${esc(address)}${addressIsCompany?' (כתובת החברה)':''}</div>
+        <a class="btn secondary contact-link" target="_blank" href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}">🗺️ נווט עם Google Maps</a>
+        <a class="btn secondary contact-link" target="_blank" href="https://waze.com/ul?q=${encodeURIComponent(address)}&navigate=yes">🚗 נווט עם Waze</a>
+      `:''}
+    </div>
+    ${c.notes?`<div class="muted" style="margin-top:8px;">${esc(c.notes)}</div>`:''}
+    <div class="row" style="margin-top:14px;">
+      <button class="btn secondary" id="ccEdit">✏️ עריכה</button>
+      <button class="btn secondary" id="ccClose">סגור</button>
+    </div>
+  `, {center:true});
+  bg.querySelector('#ccClose').onclick = ()=> bg.remove();
+  bg.querySelector('#ccEdit').onclick = ()=>{ bg.remove(); openContactModal(c); };
+}
+
 /* ================= Settings ================= */
 function renderSettings(){
   const permState = ('Notification' in window) ? Notification.permission : 'unsupported';
   const theme = getThemeSetting();
+  const workdays = getWorkdays();
+  const firstDay = getFirstDay();
+  const expandDef = getExpandDefault();
+  const gcalId = getGcalId();
   main.innerHTML = `
     <div class="card">
       <h3>🎨 תצוגה</h3>
@@ -533,20 +627,43 @@ function renderSettings(){
         <option value="light" ${theme==='light'?'selected':''}>יום (בהיר)</option>
         <option value="dark" ${theme==='dark'?'selected':''}>לילה (כהה)</option>
       </select>
+      <label>תצוגת משימות בפרויקט - ברירת מחדל</label>
+      <select id="expandDefSel">
+        <option value="expanded" ${expandDef==='expanded'?'selected':''}>הכל פתוח ומורחב</option>
+        <option value="collapsed" ${expandDef==='collapsed'?'selected':''}>הכל מכווץ</option>
+      </select>
+    </div>
+    <div class="card">
+      <h3>📆 שבוע עבודה</h3>
+      <label>יום ראשון בשבוע (להצגת ימים בבחירת תזכורות)</label>
+      <select id="firstDaySel">
+        <option value="0" ${firstDay===0?'selected':''}>ראשון</option>
+        <option value="1" ${firstDay===1?'selected':''}>שני</option>
+      </select>
+      <label>ימי עבודה (משפיע על אפשרויות תזכורת "ימי עבודה" / "סוף שבוע")</label>
+      <div class="row" id="workdaysRow">
+        ${DAY_FULL.map((n,i)=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-wd="${i}" style="width:auto;" ${workdays.includes(i)?'checked':''}> ${n}</label>`).join('')}
+      </div>
+    </div>
+    <div class="card">
+      <h3>📅 יומן Google</h3>
+      <label>מזהה יומן (Calendar ID) - אופציונלי</label>
+      <input id="gcalIdInput" placeholder="לדוגמה: xxxxxxxx@group.calendar.google.com" value="${esc(gcalId)}">
+      <div class="footer-note" style="margin-top:6px;">
+        תמצא את זה ב-Google Calendar (בדפדפן) → הגדרות היומן הספציפי → "שילוב" (Integrate calendar) → "מזהה יומן" (Calendar ID).
+        אם תשאיר ריק, כפתור "הוסף ליומן" יפתח עם יומן ברירת המחדל שלך ותוכל לבחור יומן ידנית בעת השמירה.
+      </div>
     </div>
     <div class="card">
       <h3>🔔 התראות</h3>
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
       <div class="footer-note" style="margin-top:8px;">
-        התראות מוצגות כאשר האפליקציה פתוחה או ברקע (כל עוד הדפדפן פעיל).
-        בהתאם למגבלות אנדרואיד, ייתכן שהתראה לא תופיע אם הדפדפן/אפליקציה נסגרו לגמרי לאורך זמן רב.
-        לחיצה על התראה תוביל ישירות למשימה/תת-משימה הרלוונטית.
+        התראות מוצגות כאשר האפליקציה פתוחה או ברקע. לחיצה על התראה תוביל ישירות למשימה/תת-משימה הרלוונטית.
       </div>
     </div>
     <div class="card">
-      <h3>💾 גיבוי ושחזור (הכל - פרויקטים, אנשי קשר, חברות)</h3>
-      <div class="muted">כל המידע נשמר מקומית בטלפון בלבד. מומלץ לגבות מדי פעם לקובץ.</div>
+      <h3>💾 גיבוי ושחזור (פרויקטים, אנשי קשר, חברות)</h3>
       <div class="row" style="margin-top:8px;">
         <button class="btn" id="exportBtn">ייצוא גיבוי מלא (JSON)</button>
         <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
@@ -558,10 +675,16 @@ function renderSettings(){
       <button class="btn danger" id="resetBtn">מחיקת כל המידע</button>
     </div>
   `;
-  document.getElementById('themeSel').onchange = (e)=>{
-    localStorage.setItem('pm_theme', e.target.value);
-    applyTheme();
-  };
+  document.getElementById('themeSel').onchange = (e)=>{ localStorage.setItem('pm_theme', e.target.value); applyTheme(); };
+  document.getElementById('expandDefSel').onchange = (e)=>{ localStorage.setItem('pm_expand_default', e.target.value); };
+  document.getElementById('firstDaySel').onchange = (e)=>{ localStorage.setItem('pm_first_day', e.target.value); };
+  document.getElementById('gcalIdInput').onchange = (e)=>{ localStorage.setItem('pm_gcal_id', e.target.value.trim()); };
+  document.querySelectorAll('[data-wd]').forEach(cb=>{
+    cb.onchange = ()=>{
+      const arr = [...document.querySelectorAll('[data-wd]')].filter(x=>x.checked).map(x=>+x.dataset.wd);
+      setWorkdays(arr);
+    };
+  });
   document.getElementById('askPerm').onclick = async ()=>{
     if(!('Notification' in window)){ alert('הדפדפן לא תומך בהתראות'); return; }
     await Notification.requestPermission();
@@ -655,7 +778,7 @@ function openProjectModal(project){
 function openItemModal({item, parentList, depth, project}){
   const isEdit = !!item;
   let workingContactIds = isEdit ? [...(item.contactIds||[])] : [];
-  let workingReminders = isEdit ? (item.reminders||[]).map(r=>({...r})) : [];
+  let workingReminders = isEdit ? (item.reminders||[]).map(r=>({...r, customDays: r.customDays?[...r.customDays]:[]})) : [];
   const bg = openModalEl(`
     <h2>${isEdit?'עריכת פריט':'פריט חדש'}</h2>
     <label>כותרת</label>
@@ -664,16 +787,21 @@ function openItemModal({item, parentList, depth, project}){
     <textarea id="mDesc" rows="2">${isEdit?esc(item.desc||''):''}</textarea>
     <label>תאריך ושעת יעד</label>
     <input id="mDue" type="datetime-local" value="${isEdit&&item.due?item.due:''}">
-    <label>תזכורת חוזרת (על תאריך היעד)</label>
+    <label>תזכורת חוזרת (מחושבת על בסיס תאריך היעד)</label>
     <select id="mRec">
       ${['none','daily','weekly','monthly'].map(r=>`<option value="${r}" ${isEdit&&item.recurrence===r?'selected':''}>${recLabel(r)}</option>`).join('')}
     </select>
-    <label>תזכורות נוספות (ללא הגבלה - תאריכים ושעות משלך)</label>
+    <label>תזכורות נוספות (ללא הגבלה, כל אחת עם התאריך/שעה שלה, אפשר להפוך לחוזרת)</label>
     <div id="remList"></div>
     <button class="btn small secondary" id="addRem" style="margin-top:4px;">+ הוסף תזכורת</button>
-    <label>אנשי קשר</label>
+    <label style="margin-top:10px;">אנשי קשר</label>
     <div id="mContactsWrap"></div>
     <button class="btn small secondary" id="mAddContact" style="margin-top:4px;">+ הוסף איש קשר</button>
+    <label style="margin-top:10px;">יומן Google</label>
+    <label class="row" style="cursor:pointer;">
+      <input type="checkbox" id="mAddGcal" style="width:auto;"> פתח הוספה ליומן בעת השמירה
+    </label>
+    <button class="btn small secondary" id="mGcalNow" type="button" style="margin-top:4px;" ${(isEdit&&item.due)?'':'disabled'}>📅 הוסף ליומן עכשיו</button>
     <div class="row" style="margin-top:14px;">
       <button class="btn" id="mSave">שמירה</button>
       <button class="btn secondary" id="mCancel">ביטול</button>
@@ -681,22 +809,49 @@ function openItemModal({item, parentList, depth, project}){
     </div>
   `);
   function renderReminders(){
+    const days = orderedDayIndices();
     bg.querySelector('#remList').innerHTML = workingReminders.map((r,i)=>`
-      <div class="reminder-row">
-        <input type="datetime-local" data-rem-i="${i}" value="${r.datetime||''}">
-        <button class="icon-btn" data-rem-rm="${i}">🗑️</button>
+      <div class="card" style="padding:8px; margin-top:6px;">
+        <div class="reminder-row">
+          <input type="datetime-local" data-rem-dt="${i}" value="${r.datetime||''}">
+          <button class="icon-btn" data-rem-rm="${i}">🗑️</button>
+        </div>
+        <label class="row" style="margin-top:4px; cursor:pointer;">
+          <input type="checkbox" style="width:auto;" data-rem-recurring="${i}" ${r.recurring?'checked':''}> חזרתית
+        </label>
+        ${r.recurring?`
+          <select data-rem-type="${i}" style="margin-top:4px;">
+            ${[['daily','יומי'],['weekly','שבועי'],['monthly','חודשי'],['workdays','ימי עבודה'],['weekend','סוף שבוע'],['custom','ימים ספציפיים']].map(([v,l])=>`<option value="${v}" ${r.recType===v?'selected':''}>${l}</option>`).join('')}
+          </select>
+          ${r.recType==='custom'?`
+            <div class="row" style="margin-top:4px;">
+              ${days.map(d=>`<button type="button" class="btn small ${((r.customDays||[]).includes(d))?'':'secondary'}" data-rem-day="${i}-${d}">${DAY_SHORT[d]}</button>`).join('')}
+            </div>
+          `:''}
+        `:''}
       </div>
     `).join('') || '<div class="muted">אין תזכורות נוספות</div>';
-    bg.querySelectorAll('[data-rem-i]').forEach(inp=>{
-      inp.onchange = ()=>{ workingReminders[+inp.dataset.remI].datetime = inp.value; };
+    bg.querySelectorAll('[data-rem-dt]').forEach(inp=> inp.onchange = ()=>{ workingReminders[+inp.dataset.remDt].datetime = inp.value; });
+    bg.querySelectorAll('[data-rem-rm]').forEach(b=> b.onclick = ()=>{ workingReminders.splice(+b.dataset.remRm,1); renderReminders(); });
+    bg.querySelectorAll('[data-rem-recurring]').forEach(cb=> cb.onchange = ()=>{
+      const r = workingReminders[+cb.dataset.remRecurring];
+      r.recurring = cb.checked;
+      if(cb.checked && !r.recType) r.recType='daily';
+      renderReminders();
     });
-    bg.querySelectorAll('[data-rem-rm]').forEach(b=>{
-      b.onclick = ()=>{ workingReminders.splice(+b.dataset.remRm,1); renderReminders(); };
+    bg.querySelectorAll('[data-rem-type]').forEach(sel=> sel.onchange = ()=>{ workingReminders[+sel.dataset.remType].recType = sel.value; renderReminders(); });
+    bg.querySelectorAll('[data-rem-day]').forEach(btn=> btn.onclick = ()=>{
+      const [i,d] = btn.dataset.remDay.split('-').map(Number);
+      const r = workingReminders[i];
+      r.customDays = r.customDays || [];
+      const pos = r.customDays.indexOf(d);
+      if(pos>-1) r.customDays.splice(pos,1); else r.customDays.push(d);
+      renderReminders();
     });
   }
   renderReminders();
   bg.querySelector('#addRem').onclick = ()=>{
-    workingReminders.push({id:uid(), datetime:'', notified:false});
+    workingReminders.push({id:uid(), datetime:'', notified:false, recurring:false, recType:'daily', customDays:[]});
     renderReminders();
   };
   function renderChips(){
@@ -712,6 +867,16 @@ function openItemModal({item, parentList, depth, project}){
   bg.querySelector('#mAddContact').onclick = ()=>{
     openAttachContactModal(workingContactIds, (newIds)=>{ workingContactIds = newIds; renderChips(); });
   };
+  bg.querySelector('#mDue').addEventListener('change', (e)=>{
+    bg.querySelector('#mGcalNow').disabled = !e.target.value;
+  });
+  bg.querySelector('#mGcalNow').onclick = ()=>{
+    const due = bg.querySelector('#mDue').value;
+    if(!due) return;
+    const tempItem = { title: bg.querySelector('#mTitle').value.trim()||'(ללא כותרת)', desc: bg.querySelector('#mDesc').value, due };
+    const url = gcalLink(tempItem, project);
+    if(url) window.open(url, '_blank');
+  };
   bg.querySelector('#mCancel').onclick = ()=> bg.remove();
   bg.querySelector('#mSave').onclick = ()=>{
     const title = bg.querySelector('#mTitle').value.trim();
@@ -719,15 +884,27 @@ function openItemModal({item, parentList, depth, project}){
     const due = bg.querySelector('#mDue').value;
     const rec = bg.querySelector('#mRec').value;
     const desc = bg.querySelector('#mDesc').value;
-    const cleanReminders = workingReminders.filter(r=>r.datetime);
+    const addGcal = bg.querySelector('#mAddGcal').checked;
+    const cleanReminders = workingReminders.filter(r=>r.datetime).map(r=>({
+      id: r.id||uid(), datetime: r.datetime, notified: !!r.notified,
+      recurring: !!r.recurring, recType: r.recurring?(r.recType||'daily'):'none',
+      customDays: r.customDays||[]
+    }));
+    let savedItem;
     if(isEdit){
       item.title=title; item.desc=desc; item.due=due; item.recurrence=rec; item.contactIds=workingContactIds; item.reminders=cleanReminders;
+      savedItem = item;
     } else {
       const it = newItem(title);
       it.desc=desc; it.due=due; it.recurrence=rec; it.contactIds=workingContactIds; it.reminders=cleanReminders;
       parentList.push(it);
+      savedItem = it;
     }
     save(); bg.remove(); render();
+    if(addGcal && due){
+      const url = gcalLink(savedItem, project);
+      if(url) window.open(url, '_blank');
+    }
   };
   if(isEdit){
     bg.querySelector('#mDelete').onclick = ()=>{
@@ -756,6 +933,8 @@ function openContactModal(contact){
     <input id="cPhone" value="${isEdit?esc(contact.phone||''):''}">
     <label>אימייל</label>
     <input id="cEmail" value="${isEdit?esc(contact.email||''):''}">
+    <label>כתובת (לניווט)</label>
+    <input id="cAddress" value="${isEdit?esc(contact.address||''):''}">
     <label>הערות</label>
     <textarea id="cNotes" rows="2">${isEdit?esc(contact.notes||''):''}</textarea>
     <div class="row" style="margin-top:14px;">
@@ -780,7 +959,7 @@ function openContactModal(contact){
     const vals = {
       name, role: bg.querySelector('#cRole').value, companyId: bg.querySelector('#cCompany').value,
       phone: bg.querySelector('#cPhone').value, email: bg.querySelector('#cEmail').value,
-      notes: bg.querySelector('#cNotes').value
+      address: bg.querySelector('#cAddress').value, notes: bg.querySelector('#cNotes').value
     };
     if(isEdit) Object.assign(contact, vals);
     else DATA.contacts.push({id: uid(), ...vals});
@@ -868,6 +1047,25 @@ function openAttachContactModal(currentIds, onDone){
   bg.querySelector('#attachSave').onclick = ()=>{ onDone(working); bg.remove(); };
 }
 
+/* ================= Google Calendar quick-add link ================= */
+function gcalLink(item, project){
+  if(!item.due) return null;
+  const start = new Date(item.due);
+  if(isNaN(start.getTime())) return null;
+  const end = new Date(start.getTime()+60*60*1000);
+  const fmt = d=> d.toISOString().replace(/[-:]|\.\d{3}/g,'');
+  const params = new URLSearchParams({
+    action:'TEMPLATE',
+    text: item.title,
+    dates: fmt(start)+'/'+fmt(end),
+    details: (item.desc||'') + (project?('\n\nפרויקט: ' + project.name):'')
+  });
+  const gcalId = getGcalId();
+  let url = 'https://calendar.google.com/calendar/render?'+params.toString();
+  if(gcalId) url += '&src='+encodeURIComponent(gcalId);
+  return url;
+}
+
 /* ================= Notifications engine ================= */
 function collectAllItems(){
   const out = [];
@@ -927,6 +1125,30 @@ function advanceRecurrence(item){
   return true;
 }
 
+function advanceReminder(r){
+  const d = new Date(r.datetime);
+  if(isNaN(d.getTime())) return;
+  if(r.recType==='daily') d.setDate(d.getDate()+1);
+  else if(r.recType==='weekly') d.setDate(d.getDate()+7);
+  else if(r.recType==='monthly') d.setMonth(d.getMonth()+1);
+  else if(r.recType==='workdays'){
+    const wd = getWorkdays();
+    let guard=0;
+    do{ d.setDate(d.getDate()+1); guard++; } while(!wd.includes(d.getDay()) && guard<14);
+  } else if(r.recType==='weekend'){
+    const wd = getWorkdays();
+    let guard=0;
+    do{ d.setDate(d.getDate()+1); guard++; } while(wd.includes(d.getDay()) && guard<14);
+  } else if(r.recType==='custom'){
+    const days = (r.customDays && r.customDays.length) ? r.customDays : [d.getDay()];
+    let guard=0;
+    do{ d.setDate(d.getDate()+1); guard++; } while(!days.includes(d.getDay()) && guard<14);
+  } else {
+    d.setDate(d.getDate()+1);
+  }
+  r.datetime = toLocalInputValue(d);
+}
+
 function toLocalInputValue(d){
   const pad = n=>String(n).padStart(2,'0');
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -952,7 +1174,8 @@ function checkNotifications(){
       if(r.notified || !r.datetime) continue;
       if(new Date(r.datetime) <= now){
         fireNotification(item, project, item.id+'-'+r.id);
-        r.notified = true;
+        if(r.recurring){ advanceReminder(r); r.notified = false; }
+        else r.notified = true;
         changed = true;
       }
     }
@@ -976,11 +1199,13 @@ function handleDeepLinkFromUrl(){
     history.replaceState({}, '', window.location.pathname);
   }
 }
-navigator.serviceWorker && navigator.serviceWorker.addEventListener && navigator.serviceWorker.addEventListener('message', (evt)=>{
-  if(evt.data && evt.data.type==='NAVIGATE' && evt.data.projectId && evt.data.itemId){
-    navigateToItem(evt.data.projectId, evt.data.itemId);
-  }
-});
+if(navigator.serviceWorker && navigator.serviceWorker.addEventListener){
+  navigator.serviceWorker.addEventListener('message', (evt)=>{
+    if(evt.data && evt.data.type==='NAVIGATE' && evt.data.projectId && evt.data.itemId){
+      navigateToItem(evt.data.projectId, evt.data.itemId);
+    }
+  });
+}
 
 /* ================= Overdue popup (once per app open) ================= */
 function maybeShowOverduePopup(){
@@ -1055,7 +1280,6 @@ function importCompaniesCsv(text){
   const idx = {name:header.indexOf('name'), parent:header.indexOf('parent'), phone:header.indexOf('phone'), address:header.indexOf('address'), website:header.indexOf('website'), notes:header.indexOf('notes')};
   if(idx.name<0){ alert('חסרה עמודת name בקובץ'); return; }
   const dataRows = rows.slice(1).filter(r=>r[idx.name] && r[idx.name].trim());
-  // pass 1: create/find by name
   const byName = {};
   DATA.companies.forEach(c=> byName[c.name.trim().toLowerCase()] = c);
   dataRows.forEach(r=>{
@@ -1071,7 +1295,6 @@ function importCompaniesCsv(text){
     if(idx.website>=0) co.website = r[idx.website]||co.website;
     if(idx.notes>=0) co.notes = r[idx.notes]||co.notes;
   });
-  // pass 2: link parents
   if(idx.parent>=0){
     dataRows.forEach(r=>{
       const name = r[idx.name].trim();
@@ -1130,7 +1353,7 @@ function importContactsCsv(text){
     };
     let existing = byContactName[name.toLowerCase()];
     if(existing) Object.assign(existing, vals);
-    else { const c = {id: uid(), name, ...vals}; DATA.contacts.push(c); byContactName[name.toLowerCase()]=c; }
+    else { const c = {id: uid(), name, address:'', ...vals}; DATA.contacts.push(c); byContactName[name.toLowerCase()]=c; }
   });
   save(); render();
   alert(`יובאו/עודכנו ${dataRows.length} אנשי קשר`);
