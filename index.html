@@ -96,7 +96,7 @@
 <body>
 
 <header>
-  <h1>📋 מנהל פרויקטים ומשימות</h1>
+  <h1>📋 מנהל פרויקטים ומשימות <span id="verTag" style="font-size:10px; color:var(--muted); font-weight:400;"></span></h1>
   <div class="tabs">
     <div class="tab active" data-tab="projects">פרויקטים</div>
     <div class="tab" data-tab="dashboard">דשבורד</div>
@@ -119,6 +119,11 @@ function loadData(){
   }catch(e){}
   return { projects: [], contacts: [], companies: [], quickLinks: [] };
 }
+/* ================= App version ================= */
+/* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
+   If this number doesn't change after you refresh, the browser is still serving a cached copy. */
+const APP_VERSION = '2026-09-26_1215';
+
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
 if(!DATA.quickLinks) DATA.quickLinks = [];
@@ -291,7 +296,7 @@ function renderQuickLinksRow(){
   return `<div class="quicklinks">${DATA.quickLinks.map(q=>`<button class="btn secondary small" data-qlink="${esc(buildQuickLinkHref(q))}">${esc(q.icon||'📱')} ${esc(q.name)}</button>`).join('')}</div>`;
 }
 function buildQuickLinkHref(q){
-  if(q.pkg) return `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${q.pkg};end`;
+  if(q.pkg) return `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${q.pkg};end;`;
   return q.url || '';
 }
 function wireQuickLinks(container){
@@ -1011,6 +1016,13 @@ function renderSettings(){
         <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
       </div>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
+    </div>
+    <div class="card">
+      <h3>ℹ️ אודות</h3>
+      <div class="muted">גרסת אפליקציה: <b>${esc(APP_VERSION)}</b></div>
+      <div class="footer-note" style="margin-top:6px;">
+        המספר הזה משתנה בכל עדכון קבצים. אם אחרי שהעלית קבצים חדשים ל-GitHub ורעננת את האפליקציה המספר כאן לא השתנה - זה סימן שהדפדפן עדיין מציג גרסה שמורה במטמון, ולא שההעלאה נכשלה.
+      </div>
     </div>
     <div class="card">
       <h3>⚠️ איפוס</h3>
@@ -1826,6 +1838,7 @@ function recLabel(r){ return {none:'ללא', daily:'יומי', weekly:'שבוע�
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
+document.getElementById('verTag').textContent = 'v' + APP_VERSION;
 render();
 handleDeepLinkFromUrl();
 checkNotifications();
