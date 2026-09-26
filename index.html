@@ -130,7 +130,26 @@ function newItem(title){
   return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], primaryContactId:'', children:[], lastNotified:'', reminders:[] };
 }
 function newProject(name){
-  return { id: uid(), name, status:'active', notes:'', contactIds:[], primaryContactId:'', tasks:[] };
+  return { id: uid(), name, status:'active', notes:'', companyId:'', contactIds:[], primaryContactId:'', tasks:[] };
+}
+function extractDomain(url){
+  if(!url) return '';
+  let d = url.trim();
+  d = d.replace(/^https?:\/\//i,'').replace(/^www\./i,'');
+  d = d.split('/')[0].split('?')[0];
+  return d;
+}
+function companyLogoImg(company, size){
+  size = size||22;
+  if(!company) return '';
+  const domain = extractDomain(company.website);
+  if(!domain) return '';
+  return `<img src="https://www.google.com/s2/favicons?sz=${size}&domain=${encodeURIComponent(domain)}" alt="" style="width:${size}px;height:${size}px;border-radius:6px;vertical-align:middle;object-fit:cover;" onerror="this.style.display='none'">`;
+}
+function companyInline(company, size){
+  if(!company) return '';
+  const logo = companyLogoImg(company, size);
+  return `${logo?logo+' ':'🏢 '}${esc(companyChainName(company))}`;
 }
 function findProject(id){ return DATA.projects.find(p=>p.id===id); }
 function findItem(list, id){
@@ -314,11 +333,13 @@ function renderProjectsList(){
     ${filtered.length===0?`<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.<br>לחץ על + כדי להוסיף פרויקט ראשון.':'לא נמצאו תוצאות.'}</div>`:''}
     ${filtered.map(p=>{
       const stats = countStatus(p.tasks);
+      const pco = DATA.companies.find(x=>x.id===p.companyId);
       return `<div class="card" data-open="${p.id}">
         <div class="item-head">
-          <h3>${esc(p.name)}</h3>
+          <h3>${companyLogoImg(pco,20)} ${esc(p.name)}</h3>
           <span class="muted">${statusLabel(p.status)}</span>
         </div>
+        ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
         <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
       </div>`;
     }).join('')}
@@ -337,11 +358,13 @@ function renderProjectsListOnly(){
     ${filtered.length===0?`<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.':'לא נמצאו תוצאות.'}</div>`:''}
     ${filtered.map(p=>{
       const stats = countStatus(p.tasks);
+      const pco = DATA.companies.find(x=>x.id===p.companyId);
       return `<div class="card" data-open="${p.id}">
         <div class="item-head">
-          <h3>${esc(p.name)}</h3>
+          <h3>${companyLogoImg(pco,20)} ${esc(p.name)}</h3>
           <span class="muted">${statusLabel(p.status)}</span>
         </div>
+        ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
         <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
       </div>`;
     }).join('')}
@@ -410,13 +433,15 @@ function sortedSiblings(items){
 function renderProjectDetail(pid){
   const p = findProject(pid);
   if(!p){ currentProjectId=null; render(); return; }
+  const pco = DATA.companies.find(x=>x.id===p.companyId);
   main.innerHTML = `
     <button class="btn secondary small" id="backBtn">→ חזרה לפרויקטים</button>
     <div class="card" style="margin-top:10px;">
       <div class="item-head">
-        <h3>${esc(p.name)}</h3>
+        <h3>${companyLogoImg(pco,22)} ${esc(p.name)}</h3>
         <button class="icon-btn" id="editProjBtn">✏️</button>
       </div>
+      ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
       ${p.notes?`<div class="muted">${esc(p.notes)}</div>`:''}
       <div style="margin-top:6px;">${renderContactChips(p.contactIds)}</div>
       ${p.primaryContactId?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${renderContactChips([p.primaryContactId])}</div>`:''}
@@ -734,7 +759,7 @@ function renderDashboard(){
       <h3>🏢 לקוחות/חברות עם הכי הרבה משימות פתוחות</h3>
       ${topClients.length===0?'<div class="muted">אין נתונים עדיין (שייך אנשי קשר ללקוחות/חברות)</div>':topClients.map(({co,count})=>`
         <div class="row" style="justify-content:space-between; padding:4px 0;">
-          <span style="font-size:13px;">🏢 ${esc(companyChainName(co))}</span>
+          <span style="font-size:13px;">${companyInline(co,18)}</span>
           <span class="muted">${count} משימות פתוחות</span>
         </div>
       `).join('')}
@@ -793,7 +818,7 @@ function renderContactsList(){
           </div>
         </div>
         ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
-        ${co?`<div class="muted">🏢 ${esc(companyChainName(co))}</div>`:''}
+        ${co?`<div class="muted">${companyInline(co,16)}</div>`:''}
         ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}</div>`:''}
         <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
         ${c.address?`<div class="muted">📍 ${esc(c.address)}</div>`:''}
@@ -839,7 +864,7 @@ function renderCompaniesList(){
     list.innerHTML = DATA.companies.map(co=>`
       <div class="card">
         <div class="item-head">
-          <h3>🏢 ${esc(co.name)}</h3>
+          <h3>${companyLogoImg(co,20)} ${esc(co.name)}</h3>
           <div class="row" style="gap:2px;">
             <button class="icon-btn" data-editco="${co.id}">✏️</button>
             <button class="icon-btn" data-delco="${co.id}">🗑️</button>
@@ -883,7 +908,7 @@ function openContactDetailModal(contactId){
   const bg = openModalEl(`
     <h2>👤 ${esc(c.name)}</h2>
     ${c.role?`<div class="muted">${esc(c.role)}</div>`:''}
-    ${co?`<div class="muted">🏢 ${esc(companyChainName(co))}</div>`:''}
+    ${co?`<div class="muted">${companyInline(co,16)}</div>`:''}
     ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}</div>`:''}
     <div style="margin-top:10px;">
       ${c.phone?`<a class="btn secondary contact-link" href="tel:${esc(c.phone)}">📞 חייג ל-${esc(c.phone)}</a>`:''}
@@ -1070,6 +1095,11 @@ function openProjectModal(project){
     <h2>${isEdit?'עריכת פרויקט':'פרויקט חדש'}</h2>
     <label>שם הפרויקט</label>
     <input id="mName" value="${isEdit?esc(project.name):''}">
+    <label>לקוח / חברה *</label>
+    <div class="row">
+      <select id="mCompany" style="flex:1;"></select>
+      <button class="btn small secondary" id="mAddCompany" type="button">+ חדש</button>
+    </div>
     <label>סטטוס</label>
     <select id="mStatus">
       ${['active','won','lost','paused'].map(s=>`<option value="${s}" ${isEdit&&project.status===s?'selected':''}>${statusLabel(s)}</option>`).join('')}
@@ -1105,6 +1135,16 @@ function openProjectModal(project){
     renderPrimarySelect();
   }
   renderChips();
+  function fillCompanySelect(selectedId){
+    const sel = bg.querySelector('#mCompany');
+    sel.innerHTML = `<option value="">בחר לקוח/חברה...</option>` + DATA.companies.map(co=>
+      `<option value="${co.id}" ${selectedId===co.id?'selected':''}>${esc(companyChainName(co))}</option>`
+    ).join('');
+  }
+  fillCompanySelect(isEdit?project.companyId:'');
+  bg.querySelector('#mAddCompany').onclick = ()=>{
+    openCompanyModal(null, (newCo)=>{ fillCompanySelect(newCo.id); });
+  };
   bg.querySelector('#mAddContact').onclick = ()=>{
     openAttachContactModal(workingContactIds, (newIds)=>{ workingContactIds = newIds; renderChips(); });
   };
@@ -1112,12 +1152,15 @@ function openProjectModal(project){
   bg.querySelector('#mSave').onclick = ()=>{
     const name = bg.querySelector('#mName').value.trim();
     if(!name){ alert('נא להזין שם'); return; }
+    const companyId = bg.querySelector('#mCompany').value;
+    if(!companyId){ alert('נא לבחור לקוח/חברה'); return; }
     const primary = bg.querySelector('#mPrimary').value;
     if(isEdit){
       project.name = name; project.status = bg.querySelector('#mStatus').value; project.notes = bg.querySelector('#mNotes').value;
-      project.contactIds = workingContactIds; project.primaryContactId = primary;
+      project.companyId = companyId; project.contactIds = workingContactIds; project.primaryContactId = primary;
     } else {
       const p = newProject(name);
+      p.companyId = companyId;
       p.status = bg.querySelector('#mStatus').value; p.notes = bg.querySelector('#mNotes').value;
       p.contactIds = workingContactIds; p.primaryContactId = primary;
       DATA.projects.push(p);
@@ -1466,7 +1509,11 @@ function gcalLink(item, project){
   if(deepLink) details += (details?'\n\n':'') + 'קישור למשימה: ' + deepLink;
 
   const primaryContact = findPrimaryContactCascading(item, project);
-  const location = primaryContact ? getContactAddress(primaryContact) : '';
+  let location = primaryContact ? getContactAddress(primaryContact) : '';
+  if(!location && project && project.companyId){
+    const pco = DATA.companies.find(x=>x.id===project.companyId);
+    if(pco && pco.address) location = pco.address;
+  }
 
   const params = new URLSearchParams({ action:'TEMPLATE', text: title, dates: fmt(start)+'/'+fmt(end), details });
   if(location) params.set('location', location);
