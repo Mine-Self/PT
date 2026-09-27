@@ -54,8 +54,10 @@
     border-radius:var(--radius-sm); padding:9px 11px; font-size:14px; width:100%; font-family:inherit;
   }
   label{font-size:12px; color:var(--muted); display:block; margin:8px 0 3px; font-weight:600;}
-  .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center; z-index:50;}
-  .modal{background:var(--panel); border-radius:20px 20px 0 0; width:100%; max-width:520px; max-height:88vh; overflow-y:auto; padding:18px; padding-bottom:calc(18px + env(safe-area-inset-bottom,0px));}
+  .modal-bg{position:fixed; inset:0; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center; z-index:50; opacity:0; transition:opacity 140ms ease;}
+  .modal-bg.show{opacity:1;}
+  .modal{background:var(--panel); border-radius:20px 20px 0 0; width:100%; max-width:520px; max-height:88vh; overflow-y:auto; padding:18px; padding-bottom:calc(18px + env(safe-area-inset-bottom,0px)); transform:translateY(24px); transition:transform 140ms ease;}
+  .modal-bg.show .modal{transform:translateY(0);}
   .modal.center{border-radius:20px; margin-bottom:auto; margin-top:15vh;}
   .modal h2{margin-top:0; font-size:17px;}
   .chip{display:inline-flex; align-items:center; gap:5px; background:var(--primary-container); color:var(--primary); border:none; border-radius:999px; padding:4px 10px; font-size:12px; margin:2px; font-weight:600;}
@@ -91,12 +93,19 @@
   .stat-card .lbl{font-size:11px; color:var(--muted); margin-top:2px;}
   .day-block{margin-top:8px;}
   .day-block h4{font-size:12px; color:var(--muted); margin:0 0 4px;}
+  [data-toggle-collapse]{transition:transform 140ms ease; display:inline-block;}
+  #main.tab-fade{animation:fadeIn 150ms ease;}
+  @keyframes fadeIn{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);} }
+  .accordion-head{cursor:pointer; display:flex; justify-content:space-between; align-items:center;}
+  .accordion-arrow{transition:transform 140ms ease;}
+  .accordion-body{overflow:hidden; max-height:0; transition:max-height 160ms ease;}
+  .accordion-body.open{max-height:2000px;}
 </style>
 </head>
 <body>
 
 <header>
-  <h1>📋 מנהל פרויקטים ומשימות <span id="verTag" style="font-size:10px; color:var(--muted); font-weight:400;"></span></h1>
+  <h1>📋 מנהל פרויקטים ומשימות</h1>
   <div class="tabs">
     <div class="tab active" data-tab="projects">פרויקטים</div>
     <div class="tab" data-tab="dashboard">דשבורד</div>
@@ -122,7 +131,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-09-26_1215';
+const APP_VERSION = '2026-09-27_0853';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -256,6 +265,9 @@ document.querySelectorAll('.tab').forEach(t=>{
     currentTab = t.dataset.tab;
     currentProjectId = null;
     render();
+    main.classList.remove('tab-fade');
+    void main.offsetWidth;
+    main.classList.add('tab-fade');
   });
 });
 
@@ -293,7 +305,7 @@ function render(){
 
 function renderQuickLinksRow(){
   if(!DATA.quickLinks || DATA.quickLinks.length===0) return '';
-  return `<div class="quicklinks">${DATA.quickLinks.map(q=>`<button class="btn secondary small" data-qlink="${esc(buildQuickLinkHref(q))}">${esc(q.icon||'📱')} ${esc(q.name)}</button>`).join('')}</div>`;
+  return `<div class="quicklinks">${DATA.quickLinks.map(q=>`<button class="btn secondary small" data-qlink="${esc(buildQuickLinkHref(q))}">${esc(q.name)}</button>`).join('')}</div>`;
 }
 function buildQuickLinkHref(q){
   if(q.pkg) return `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${q.pkg};end;`;
@@ -501,9 +513,9 @@ function renderItemHtml(item, depth, project){
   return `<div class="tree-item" data-item="${item.id}">
     <div class="item-head">
       <div style="display:flex; gap:4px; align-items:flex-start;">
-        ${hasChildren?`<button class="icon-btn" data-toggle-collapse="${item.id}" style="padding:2px 4px;">${collapsed?'▸':'▾'}</button>`:''}
+        ${hasChildren?`<button class="icon-btn" data-toggle-collapse="${item.id}" style="padding:2px 4px; transform:rotate(${collapsed?0:90}deg);">▸</button>`:''}
         <div>
-          <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-toggle-status="${item.id}">
+          <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-open-focus="${item.id}">
             ${esc(item.title)}<span class="status-pill">${statusText}</span>
           </span>
           <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
@@ -512,6 +524,7 @@ function renderItemHtml(item, depth, project){
       </div>
       <div class="row" style="gap:2px;">
         ${item.due?`<button class="icon-btn" data-gcal="${item.id}" title="הוסף ליומן Google">📅</button>`:''}
+        <button class="icon-btn" data-toggle-status="${item.id}" title="${item.status==='done'?'סמן כפתוח':'סמן כהושלם'}">${item.status==='done'?'↩️':'✅'}</button>
         <button class="icon-btn" data-edit="${item.id}">✏️</button>
         <button class="icon-btn" data-del="${item.id}">🗑️</button>
       </div>
@@ -537,6 +550,9 @@ function wireItemEvents(project){
       it.status = it.status==='done' ? 'open' : 'done';
       save(); render();
     });
+  });
+  main.querySelectorAll('[data-open-focus]').forEach(el=>{
+    el.addEventListener('click', ()=> openFocusModal(el.dataset.openFocus, project));
   });
   main.querySelectorAll('[data-toggle-collapse]').forEach(el=>{
     el.addEventListener('click', ()=> toggleCollapse(el.dataset.toggleCollapse));
@@ -934,11 +950,12 @@ function openContactDetailModal(contactId){
       <button class="btn secondary" id="ccClose">סגור</button>
     </div>
   `, {center:true});
-  bg.querySelector('#ccClose').onclick = ()=> bg.remove();
-  bg.querySelector('#ccEdit').onclick = ()=>{ bg.remove(); openContactModal(c); };
+  bg.querySelector('#ccClose').onclick = ()=> closeModal(bg);
+  bg.querySelector('#ccEdit').onclick = ()=>{ closeModal(bg); openContactModal(c); };
 }
 
 /* ================= Settings ================= */
+let settingsOpenSection = null;
 function renderSettings(){
   const permState = ('Notification' in window) ? Notification.permission : 'unsupported';
   const theme = getThemeSetting();
@@ -947,9 +964,9 @@ function renderSettings(){
   const expandDef = getExpandDefault();
   const gcalId = getGcalId();
   const siteUrl = localStorage.getItem('pm_site_url') || '';
-  main.innerHTML = `
-    <div class="card">
-      <h3>🎨 תצוגה</h3>
+
+  const sections = [
+    { id:'general', title:'⚙️ כללי', body: `
       <label>מצב יום/לילה</label>
       <select id="themeSel">
         <option value="auto" ${theme==='auto'?'selected':''}>אוטומטי (לפי הגדרות המכשיר)</option>
@@ -961,9 +978,6 @@ function renderSettings(){
         <option value="expanded" ${expandDef==='expanded'?'selected':''}>הכל פתוח ומורחב</option>
         <option value="collapsed" ${expandDef==='collapsed'?'selected':''}>הכל מכווץ</option>
       </select>
-    </div>
-    <div class="card">
-      <h3>📆 שבוע עבודה</h3>
       <label>יום ראשון בשבוע</label>
       <select id="firstDaySel">
         <option value="0" ${firstDay===0?'selected':''}>ראשון</option>
@@ -973,128 +987,159 @@ function renderSettings(){
       <div class="row" id="workdaysRow">
         ${DAY_FULL.map((n,i)=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-wd="${i}" style="width:auto;" ${workdays.includes(i)?'checked':''}> ${n}</label>`).join('')}
       </div>
-    </div>
-    <div class="card">
-      <h3>📅 יומן Google</h3>
-      <label>מזהה יומן (Calendar ID) - אופציונלי</label>
+    `},
+    { id:'calapps', title:'📅 יומן ואפליקציות', body: `
+      <label>מזהה יומן Google (Calendar ID) - אופציונלי</label>
       <input id="gcalIdInput" placeholder="לדוגמה: xxxxxxxx@group.calendar.google.com" value="${esc(gcalId)}">
       <label>כתובת האתר שלי (GitHub Pages)</label>
       <input id="siteUrlInput" placeholder="https://username.github.io/projects-app/" value="${esc(siteUrl)}">
-      <div class="footer-note" style="margin-top:6px;">
-        משמש ליצירת קישור חזרה למשימה מתוך הערות אירוע היומן. תמלא אחרי שהאתר עלה ל-GitHub Pages.
-      </div>
-    </div>
-    <div class="card">
-      <h3>🔗 קישורים מהירים לאפליקציות מותקנות</h3>
+      <div class="footer-note" style="margin-top:6px;">משמש ליצירת קישור חזרה למשימה מתוך הערות אירוע היומן.</div>
+      <label style="margin-top:14px;">קישורים מהירים לאפליקציות מותקנות</label>
       <div class="footer-note">
-        זה פותח את האפליקציה המותקנת בטלפון עצמה (לא אתר) - לפי "שם החבילה" (Package name) שלה, גם אם לאפליקציה אין אתר בכלל.
-        <br><br><b>איך מוצאים שם חבילה:</b> חפש את האפליקציה ב-Google Play מהדפדפן (לא מתוך אפליקציית Play), והעתק מהכתובת (URL) את מה שאחרי <code>id=</code> - למשל עבור וואטסאפ הכתובת היא
-        play.google.com/store/apps/details?id=<b>com.whatsapp</b>, אז שם החבילה הוא com.whatsapp.
+        פותח את האפליקציה המותקנת בטלפון עצמה (לא אתר) לפי "שם חבילה" (Package name).
+        <b>איך מוצאים:</b> חפש את האפליקציה ב-Google Play מהדפדפן, והעתק מהכתובת את מה שאחרי <code>id=</code> (למשל com.whatsapp).
       </div>
       <div id="qlList" style="margin-top:8px;"></div>
       <div class="row" style="margin-top:6px;">
         <input id="qlName" placeholder="שם (למשל וואטסאפ)" style="flex:1;">
-        <input id="qlUrl" placeholder="שם חבילה, למשל com.whatsapp" style="flex:2;">
+        <input id="qlPkg" placeholder="שם חבילה, למשל com.whatsapp" style="flex:2;">
       </div>
       <button class="btn small secondary" id="qlAdd" style="margin-top:6px;">+ הוסף קישור מהיר</button>
-    </div>
-    <div class="card">
-      <h3>🖼️ לוגו לקוחות - חשוב</h3>
-      <div class="footer-note">
-        הלוגו מוצג רק אם מילאת "אתר אינטרנט" בכרטיס הלקוח/חברה (בלשונית "אנשי קשר" ← "לקוחות/חברות" ← עריכה). בלי שדה אתר, לא ניתן למשוך לוגו - יוצג רק אייקון 🏢.
-      </div>
-    </div>
-    <div class="card">
-      <h3>🔔 התראות</h3>
+    `},
+    { id:'notif', title:'🔔 התראות', body: `
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
-    </div>
-    <div class="card">
-      <h3>💾 גיבוי ושחזור</h3>
-      <div class="row" style="margin-top:8px;">
+    `},
+    { id:'backup', title:'💾 גיבוי ומידע', body: `
+      <div class="row">
         <button class="btn" id="exportBtn">ייצוא גיבוי מלא (JSON)</button>
         <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
       </div>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
-    </div>
+      <div class="muted" style="margin-top:14px;">גרסת אפליקציה: <b>${esc(APP_VERSION)}</b></div>
+      <div class="footer-note" style="margin-top:4px;">
+        המספר משתנה בכל עדכון קבצים. אם אחרי העלאה לגיטהאב ורענון המספר לא השתנה - הדפדפן מציג גרסה שמורה במטמון.
+      </div>
+      <div style="margin-top:14px;">
+        <button class="btn danger" id="resetBtn">⚠️ מחיקת כל המידע</button>
+      </div>
+    `},
+  ];
+
+  main.innerHTML = sections.map(s=>`
     <div class="card">
-      <h3>ℹ️ אודות</h3>
-      <div class="muted">גרסת אפליקציה: <b>${esc(APP_VERSION)}</b></div>
-      <div class="footer-note" style="margin-top:6px;">
-        המספר הזה משתנה בכל עדכון קבצים. אם אחרי שהעלית קבצים חדשים ל-GitHub ורעננת את האפליקציה המספר כאן לא השתנה - זה סימן שהדפדפן עדיין מציג גרסה שמורה במטמון, ולא שההעלאה נכשלה.
+      <div class="accordion-head" data-acc="${s.id}">
+        <h3 style="margin:0;">${s.title}</h3>
+        <span class="accordion-arrow" style="transform:rotate(${settingsOpenSection===s.id?90:0}deg);">▸</span>
+      </div>
+      <div class="accordion-body ${settingsOpenSection===s.id?'open':''}" id="acc-${s.id}">
+        <div style="padding-top:10px;">${s.body}</div>
       </div>
     </div>
-    <div class="card">
-      <h3>⚠️ איפוס</h3>
-      <button class="btn danger" id="resetBtn">מחיקת כל המידע</button>
-    </div>
-  `;
-  document.getElementById('themeSel').onchange = (e)=>{ localStorage.setItem('pm_theme', e.target.value); applyTheme(); };
-  document.getElementById('expandDefSel').onchange = (e)=>{ localStorage.setItem('pm_expand_default', e.target.value); };
-  document.getElementById('firstDaySel').onchange = (e)=>{ localStorage.setItem('pm_first_day', e.target.value); };
-  document.getElementById('gcalIdInput').onchange = (e)=>{ localStorage.setItem('pm_gcal_id', e.target.value.trim()); };
-  document.getElementById('siteUrlInput').onchange = (e)=>{ localStorage.setItem('pm_site_url', e.target.value.trim()); };
-  document.querySelectorAll('[data-wd]').forEach(cb=>{
-    cb.onchange = ()=>{
-      const arr = [...document.querySelectorAll('[data-wd]')].filter(x=>x.checked).map(x=>+x.dataset.wd);
-      setWorkdays(arr);
-    };
+  `).join('');
+
+  main.querySelectorAll('[data-acc]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      settingsOpenSection = (settingsOpenSection===el.dataset.acc) ? null : el.dataset.acc;
+      renderSettings();
+    });
   });
-  function renderQl(){
-    document.getElementById('qlList').innerHTML = DATA.quickLinks.map((q,i)=>`
-      <div class="row" style="justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
-        <span style="font-size:13px;">${esc(q.name)} <span class="muted">${esc(q.pkg||q.url||'')}</span></span>
-        <button class="icon-btn" data-qldel="${i}">🗑️</button>
-      </div>
-    `).join('') || '<div class="muted">אין קישורים מהירים עדיין</div>';
-    document.querySelectorAll('[data-qldel]').forEach(b=>{
-      b.onclick = ()=>{ DATA.quickLinks.splice(+b.dataset.qldel,1); save(); renderQl(); };
+
+  if(settingsOpenSection==='general'){
+    document.getElementById('themeSel').onchange = (e)=>{ localStorage.setItem('pm_theme', e.target.value); applyTheme(); };
+    document.getElementById('expandDefSel').onchange = (e)=>{ localStorage.setItem('pm_expand_default', e.target.value); };
+    document.getElementById('firstDaySel').onchange = (e)=>{ localStorage.setItem('pm_first_day', e.target.value); };
+    document.querySelectorAll('[data-wd]').forEach(cb=>{
+      cb.onchange = ()=>{
+        const arr = [...document.querySelectorAll('[data-wd]')].filter(x=>x.checked).map(x=>+x.dataset.wd);
+        setWorkdays(arr);
+      };
     });
   }
-  renderQl();
-  document.getElementById('qlAdd').onclick = ()=>{
-    const name = document.getElementById('qlName').value.trim();
-    const pkg = document.getElementById('qlUrl').value.trim();
-    if(!name || !pkg){ alert('נא למלא שם ושם חבילה'); return; }
-    DATA.quickLinks.push({name, pkg});
-    save(); renderQl();
-    document.getElementById('qlName').value=''; document.getElementById('qlUrl').value='';
-  };
-  document.getElementById('askPerm').onclick = async ()=>{
-    if(!('Notification' in window)){ alert('הדפדפן לא תומך בהתראות'); return; }
-    await Notification.requestPermission();
-    render();
-  };
-  document.getElementById('exportBtn').onclick = ()=>{
-    const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `גיבוי-פרויקטים-${new Date().toISOString().slice(0,10)}.json`;
-    a.click();
-  };
-  document.getElementById('importBtn').onclick = ()=> document.getElementById('importFile').click();
-  document.getElementById('importFile').onchange = (e)=>{
-    const file = e.target.files[0];
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = ()=>{
-      try{
-        const parsed = JSON.parse(reader.result);
-        if(!parsed.projects || !parsed.contacts) throw new Error('bad format');
-        if(!parsed.companies) parsed.companies = [];
-        if(!parsed.quickLinks) parsed.quickLinks = [];
-        if(confirm('הייבוא יחליף את כל המידע הקיים. להמשיך?')){
-          DATA = parsed; save(); render();
-        }
-      }catch(err){ alert('קובץ לא תקין'); }
-    };
-    reader.readAsText(file);
-  };
-  document.getElementById('resetBtn').onclick = ()=>{
-    if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות, אנשי הקשר והחברות. בטוח?')){
-      DATA = {projects:[], contacts:[], companies:[], quickLinks:[]}; save(); render();
+
+  if(settingsOpenSection==='calapps'){
+    document.getElementById('gcalIdInput').onchange = (e)=>{ localStorage.setItem('pm_gcal_id', e.target.value.trim()); };
+    document.getElementById('siteUrlInput').onchange = (e)=>{ localStorage.setItem('pm_site_url', e.target.value.trim()); };
+    let editIndex = null;
+    function renderQl(){
+      document.getElementById('qlList').innerHTML = DATA.quickLinks.map((q,i)=>`
+        <div class="row" style="justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
+          <span style="font-size:13px;">${esc(q.name)} <span class="muted">${esc(q.pkg||q.url||'')}</span></span>
+          <div class="row" style="gap:2px;">
+            <button class="icon-btn" data-qledit="${i}">✏️</button>
+            <button class="icon-btn" data-qldel="${i}">🗑️</button>
+          </div>
+        </div>
+      `).join('') || '<div class="muted">אין קישורים מהירים עדיין</div>';
+      document.querySelectorAll('[data-qldel]').forEach(b=>{
+        b.onclick = ()=>{
+          DATA.quickLinks.splice(+b.dataset.qldel,1); save();
+          if(editIndex===+b.dataset.qldel){ editIndex=null; document.getElementById('qlName').value=''; document.getElementById('qlPkg').value=''; document.getElementById('qlAdd').textContent='+ הוסף קישור מהיר'; }
+          renderQl();
+        };
+      });
+      document.querySelectorAll('[data-qledit]').forEach(b=>{
+        b.onclick = ()=>{
+          const i = +b.dataset.qledit;
+          editIndex = i;
+          document.getElementById('qlName').value = DATA.quickLinks[i].name;
+          document.getElementById('qlPkg').value = DATA.quickLinks[i].pkg || DATA.quickLinks[i].url || '';
+          document.getElementById('qlAdd').textContent = '💾 עדכן קישור מהיר';
+        };
+      });
     }
-  };
+    renderQl();
+    document.getElementById('qlAdd').onclick = ()=>{
+      const name = document.getElementById('qlName').value.trim();
+      const pkg = document.getElementById('qlPkg').value.trim();
+      if(!name || !pkg){ alert('נא למלא שם ושם חבילה'); return; }
+      if(editIndex!==null){ DATA.quickLinks[editIndex] = {name, pkg}; editIndex=null; document.getElementById('qlAdd').textContent='+ הוסף קישור מהיר'; }
+      else DATA.quickLinks.push({name, pkg});
+      save(); renderQl();
+      document.getElementById('qlName').value=''; document.getElementById('qlPkg').value='';
+    };
+  }
+
+  if(settingsOpenSection==='notif'){
+    document.getElementById('askPerm').onclick = async ()=>{
+      if(!('Notification' in window)){ alert('הדפדפן לא תומך בהתראות'); return; }
+      await Notification.requestPermission();
+      renderSettings();
+    };
+  }
+
+  if(settingsOpenSection==='backup'){
+    document.getElementById('exportBtn').onclick = ()=>{
+      const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `גיבוי-פרויקטים-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+    };
+    document.getElementById('importBtn').onclick = ()=> document.getElementById('importFile').click();
+    document.getElementById('importFile').onchange = (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        try{
+          const parsed = JSON.parse(reader.result);
+          if(!parsed.projects || !parsed.contacts) throw new Error('bad format');
+          if(!parsed.companies) parsed.companies = [];
+          if(!parsed.quickLinks) parsed.quickLinks = [];
+          if(confirm('הייבוא יחליף את כל המידע הקיים. להמשיך?')){
+            DATA = parsed; save(); render();
+          }
+        }catch(err){ alert('קובץ לא תקין'); }
+      };
+      reader.readAsText(file);
+    };
+    document.getElementById('resetBtn').onclick = ()=>{
+      if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות, אנשי הקשר והחברות. בטוח?')){
+        DATA = {projects:[], contacts:[], companies:[], quickLinks:[]}; save(); render();
+      }
+    };
+  }
 }
 function permLabel(s){
   return {granted:'מאושר ✅', denied:'נדחה ❌', default:'טרם נשאל', unsupported:'לא נתמך'}[s] || s;
@@ -1105,9 +1150,15 @@ function openModalEl(html, opts){
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `<div class="modal ${opts&&opts.center?'center':''}">${html}</div>`;
-  bg.addEventListener('click', (e)=>{ if(e.target===bg) bg.remove(); });
+  bg.addEventListener('click', (e)=>{ if(e.target===bg) closeModal(bg); });
   document.body.appendChild(bg);
+  requestAnimationFrame(()=> bg.classList.add('show'));
   return bg;
+}
+function closeModal(bg){
+  if(!bg || !bg.parentNode) return;
+  bg.classList.remove('show');
+  setTimeout(()=>{ if(bg.parentNode) bg.parentNode.removeChild(bg); }, 140);
 }
 
 function openProjectModal(project){
@@ -1170,7 +1221,7 @@ function openProjectModal(project){
   bg.querySelector('#mAddContact').onclick = ()=>{
     openAttachContactModal(workingContactIds, (newIds)=>{ workingContactIds = newIds; renderChips(); });
   };
-  bg.querySelector('#mCancel').onclick = ()=> bg.remove();
+  bg.querySelector('#mCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#mSave').onclick = ()=>{
     const name = bg.querySelector('#mName').value.trim();
     if(!name){ alert('נא להזין שם'); return; }
@@ -1187,13 +1238,13 @@ function openProjectModal(project){
       p.contactIds = workingContactIds; p.primaryContactId = primary;
       DATA.projects.push(p);
     }
-    save(); bg.remove(); render();
+    save(); closeModal(bg); render();
   };
   if(isEdit){
     bg.querySelector('#mDelete').onclick = ()=>{
       if(confirm('למחוק את הפרויקט וכל תוכנו?')){
         DATA.projects = DATA.projects.filter(p=>p.id!==project.id);
-        save(); bg.remove(); currentProjectId=null; render();
+        save(); closeModal(bg); currentProjectId=null; render();
       }
     };
   }
@@ -1311,7 +1362,7 @@ function openItemModal({item, parentList, depth, project}){
     const url = gcalLink(tempItem, project);
     if(url) window.open(url, '_blank');
   };
-  bg.querySelector('#mCancel').onclick = ()=> bg.remove();
+  bg.querySelector('#mCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#mSave').onclick = ()=>{
     const title = bg.querySelector('#mTitle').value.trim();
     if(!title){ alert('נא להזין כותרת'); return; }
@@ -1337,7 +1388,7 @@ function openItemModal({item, parentList, depth, project}){
       parentList.push(it);
       savedItem = it;
     }
-    save(); bg.remove(); render();
+    save(); closeModal(bg); render();
     if(addGcal && due){
       const url = gcalLink(savedItem, project);
       if(url) window.open(url, '_blank');
@@ -1347,10 +1398,75 @@ function openItemModal({item, parentList, depth, project}){
     bg.querySelector('#mDelete').onclick = ()=>{
       if(confirm('למחוק פריט זה וכל תתי-הפריטים?')){
         removeItem(project.tasks, item.id);
-        save(); bg.remove(); render();
+        save(); closeModal(bg); render();
       }
     };
   }
+}
+
+/* ================= Focus mode ================= */
+function openFocusModal(itemId, project){
+  const item = findItem(project.tasks, itemId);
+  if(!item) return;
+  const depth = getDepth(project.tasks, item.id);
+  const label = ['','משימה','תת-משימה','תת-תת-משימה'][depth] || 'פריט';
+  const statusText = item.status==='done' ? 'הושלם' : (item.due && new Date(item.due) < new Date() ? 'באיחור' : 'פתוח');
+  const children = sortedSiblings(item.children||[]);
+  const primary = item.primaryContactId ? DATA.contacts.find(c=>c.id===item.primaryContactId) : null;
+
+  const bg = openModalEl(`
+    <div class="muted">${label} · ${statusText}</div>
+    <h2>${esc(item.title)}</h2>
+    ${item.desc?`<div class="muted" style="white-space:pre-wrap;">${esc(item.desc)}</div>`:''}
+    ${item.due?`<div class="muted" style="margin-top:6px;">⏰ ${fmtDate(item.due)}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}</div>`:''}
+    ${(item.reminders||[]).length?`<div class="muted" style="margin-top:4px;">🔔 ${item.reminders.length} תזכורות נוספות</div>`:''}
+    ${item.contactIds && item.contactIds.length?`<div style="margin-top:8px;">${renderContactChips(item.contactIds)}</div>`:''}
+    ${primary?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${esc(primary.name)}</div>`:''}
+
+    ${children.length?`
+      <label style="margin-top:14px;">תת-פריטים (${children.length})</label>
+      <div id="focusChildren"></div>
+    `:''}
+
+    <div class="row" style="margin-top:16px;">
+      <button class="btn" id="fcEdit">✏️ עריכה</button>
+      <button class="btn secondary" id="fcToggle">${item.status==='done'?'↩️ סמן כפתוח':'✅ סמן כהושלם'}</button>
+      ${depth<3?`<button class="btn secondary" id="fcAddChild">+ הוסף ${['','תת-משימה','תת-תת-משימה'][depth]}</button>`:''}
+      ${item.due?`<button class="btn secondary" id="fcGcal">📅 יומן</button>`:''}
+      <button class="btn danger" id="fcDelete">🗑️ מחיקה</button>
+    </div>
+  `);
+  if(children.length){
+    bg.querySelector('#focusChildren').innerHTML = children.map(c=>`
+      <div class="card" data-focus-child="${c.id}" style="cursor:pointer; margin-top:6px;">
+        <div class="item-head">
+          <span style="font-size:13px; font-weight:600;">${c.status==='done'?'✅ ':''}${esc(c.title)}</span>
+          <span class="muted">${c.due?fmtDate(c.due):''}</span>
+        </div>
+      </div>
+    `).join('');
+    bg.querySelectorAll('[data-focus-child]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        closeModal(bg);
+        setTimeout(()=> openFocusModal(el.dataset.focusChild, project), 150);
+      });
+    });
+  }
+  bg.querySelector('#fcEdit').onclick = ()=>{ closeModal(bg); openItemModal({item, project}); };
+  bg.querySelector('#fcToggle').onclick = ()=>{
+    item.status = item.status==='done' ? 'open' : 'done';
+    save(); closeModal(bg); render();
+  };
+  const addChildBtn = bg.querySelector('#fcAddChild');
+  if(addChildBtn) addChildBtn.onclick = ()=>{ closeModal(bg); openItemModal({parentList:item.children, depth:depth+1, project}); };
+  const gcalBtn = bg.querySelector('#fcGcal');
+  if(gcalBtn) gcalBtn.onclick = ()=>{ const url = gcalLink(item, project); if(url) window.open(url,'_blank'); };
+  bg.querySelector('#fcDelete').onclick = ()=>{
+    if(confirm('למחוק פריט זה וכל תתי-הפריטים?')){
+      removeItem(project.tasks, item.id);
+      save(); closeModal(bg); render();
+    }
+  };
 }
 
 function openContactModal(contact){
@@ -1395,7 +1511,7 @@ function openContactModal(contact){
   bg.querySelector('#cAddCompany').onclick = ()=>{
     openCompanyModal(null, (newCo)=>{ fillCompanySelect(newCo.id); });
   };
-  bg.querySelector('#cCancel').onclick = ()=> bg.remove();
+  bg.querySelector('#cCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#cSave').onclick = ()=>{
     const name = bg.querySelector('#cName').value.trim();
     if(!name){ alert('נא להזין שם'); return; }
@@ -1407,7 +1523,7 @@ function openContactModal(contact){
     };
     if(isEdit) Object.assign(contact, vals);
     else DATA.contacts.push({id: uid(), ...vals});
-    save(); bg.remove(); render();
+    save(); closeModal(bg); render();
   };
 }
 
@@ -1437,7 +1553,7 @@ function openCompanyModal(company, onSaved){
   parentSel.innerHTML = `<option value="">ללא</option>` + DATA.companies
     .filter(co => !isEdit || (co.id!==company.id && !isDescendant(co.id, company.id)))
     .map(co=>`<option value="${co.id}" ${isEdit&&company.parentId===co.id?'selected':''}>${esc(companyChainName(co))}</option>`).join('');
-  bg.querySelector('#coCancel').onclick = ()=> bg.remove();
+  bg.querySelector('#coCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#coSave').onclick = ()=>{
     const name = bg.querySelector('#coName').value.trim();
     if(!name){ alert('נא להזין שם'); return; }
@@ -1449,7 +1565,7 @@ function openCompanyModal(company, onSaved){
     let result;
     if(isEdit){ Object.assign(company, vals); result = company; }
     else { result = {id: uid(), ...vals}; DATA.companies.push(result); }
-    save(); bg.remove(); render();
+    save(); closeModal(bg); render();
     if(onSaved) onSaved(result);
   };
   if(isEdit){
@@ -1458,7 +1574,7 @@ function openCompanyModal(company, onSaved){
         DATA.companies = DATA.companies.filter(c=>c.id!==company.id);
         DATA.contacts.forEach(c=>{ if(c.companyId===company.id) c.companyId=''; });
         DATA.companies.forEach(c=>{ if(c.parentId===company.id) c.parentId=''; });
-        save(); bg.remove(); render();
+        save(); closeModal(bg); render();
       }
     };
   }
@@ -1487,8 +1603,8 @@ function openAttachContactModal(currentIds, onDone){
       else working = working.filter(id=>id!==cb.dataset.cid);
     };
   });
-  bg.querySelector('#attachCancel').onclick = ()=> bg.remove();
-  bg.querySelector('#attachSave').onclick = ()=>{ onDone(working); bg.remove(); };
+  bg.querySelector('#attachCancel').onclick = ()=> closeModal(bg);
+  bg.querySelector('#attachSave').onclick = ()=>{ onDone(working); closeModal(bg); };
 }
 
 /* ================= Google Calendar quick-add link ================= */
@@ -1697,8 +1813,8 @@ function maybeShowOverduePopup(){
       <button class="btn secondary" id="popClose">סגור</button>
     </div>
   `, {center:true});
-  bg.querySelector('#popGo').onclick = ()=>{ bg.remove(); currentTab='overdue'; document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); render(); };
-  bg.querySelector('#popClose').onclick = ()=> bg.remove();
+  bg.querySelector('#popGo').onclick = ()=>{ closeModal(bg); currentTab='overdue'; document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); render(); };
+  bg.querySelector('#popClose').onclick = ()=> closeModal(bg);
 }
 
 /* ================= CSV helpers ================= */
@@ -1838,7 +1954,6 @@ function recLabel(r){ return {none:'ללא', daily:'יומי', weekly:'שבוע�
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
-document.getElementById('verTag').textContent = 'v' + APP_VERSION;
 render();
 handleDeepLinkFromUrl();
 checkNotifications();
