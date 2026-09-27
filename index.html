@@ -49,6 +49,16 @@
   .btn.small{padding:6px 11px; font-size:12px;}
   .btn:disabled{opacity:.5; cursor:not-allowed;}
   .fab{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); left:16px; background:var(--primary); color:#fff; border:none; width:56px; height:56px; border-radius:28px; font-size:26px; box-shadow:0 4px 16px rgba(0,0,0,.4); z-index:20;}
+  .fab-apps{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); right:16px; background:var(--panel2); color:var(--text); border:1px solid var(--border); width:50px; height:50px; border-radius:25px; font-size:21px; box-shadow:0 4px 14px rgba(0,0,0,.3); z-index:20;}
+  .nav-edge{position:fixed; top:0; right:0; width:16px; height:100%; z-index:40; background:linear-gradient(to left, rgba(61,139,255,.14), transparent); touch-action:none;}
+  .nav-edge::before{content:''; position:absolute; right:4px; top:50%; transform:translateY(-50%); width:4px; height:52px; border-radius:4px; background:var(--muted); opacity:.5;}
+  .nav-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:39; opacity:0; pointer-events:none; transition:opacity 200ms ease;}
+  .nav-backdrop.show{opacity:1; pointer-events:auto;}
+  .nav-drawer{position:fixed; top:0; right:0; height:100%; width:76%; max-width:300px; background:var(--panel); z-index:41; transform:translateX(100%); box-shadow:-6px 0 22px rgba(0,0,0,.4); padding:18px 16px; padding-top:calc(18px + env(safe-area-inset-top,0px)); padding-bottom:calc(18px + env(safe-area-inset-bottom,0px)); transition:transform 220ms ease;}
+  .nav-drawer.dragging{transition:none;}
+  .nav-drawer h2{font-size:15px; color:var(--muted); margin:0 0 14px;}
+  .nav-drawer .nav-link{display:block; padding:13px 12px; border-radius:12px; font-size:15px; font-weight:700; color:var(--text); margin-bottom:6px; cursor:pointer;}
+  .nav-drawer .nav-link.active{background:var(--primary-container); color:var(--primary);}
   input,select,textarea{
     background:var(--panel2); border:1px solid var(--border); color:var(--text);
     border-radius:var(--radius-sm); padding:9px 11px; font-size:14px; width:100%; font-family:inherit;
@@ -105,18 +115,23 @@
 <body>
 
 <header>
-  <h1>📋 מנהל פרויקטים ומשימות</h1>
-  <div class="tabs">
-    <div class="tab active" data-tab="projects">פרויקטים</div>
-    <div class="tab" data-tab="dashboard">דשבורד</div>
-    <div class="tab" data-tab="contacts">אנשי קשר</div>
-    <div class="tab" data-tab="settings">הגדרות וגיבוי</div>
-  </div>
+  <h1>📋 מנהל פרויקטים ומשימות <span id="verTag" style="font-size:10px; color:var(--muted); font-weight:400;"></span></h1>
 </header>
+
+<div class="nav-backdrop" id="navBackdrop"></div>
+<div class="nav-drawer" id="navDrawer">
+  <h2 style="margin-top:4px;">ניווט</h2>
+  <div class="nav-link" data-nav="dashboard">🏠 דשבורד</div>
+  <div class="nav-link" data-nav="projects">📁 פרויקטים</div>
+  <div class="nav-link" data-nav="contacts">👤 אנשי קשר</div>
+  <div class="nav-link" data-nav="settings">⚙️ הגדרות וגיבוי</div>
+</div>
+<div class="nav-edge" id="navEdge"></div>
 
 <main id="main"></main>
 
 <button class="fab" id="fab">+</button>
+<button class="fab-apps" id="appsFab">📱</button>
 
 <script>
 /* ================= Data layer ================= */
@@ -131,7 +146,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-09-27_0853';
+const APP_VERSION = '2026-09-27_1856';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -249,7 +264,7 @@ if(window.matchMedia){
 }
 
 /* ================= Navigation state ================= */
-let currentTab = 'projects';
+let currentTab = 'dashboard';
 let currentProjectId = null;
 let contactsSubTab = 'people';
 let highlightItemId = null;
@@ -258,16 +273,19 @@ let initializedCollapse = new Set();
 let hideCompletedInProject = false;
 let searchQuery = '';
 
-document.querySelectorAll('.tab').forEach(t=>{
-  t.addEventListener('click', ()=>{
-    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-    t.classList.add('active');
-    currentTab = t.dataset.tab;
-    currentProjectId = null;
-    render();
-    main.classList.remove('tab-fade');
-    void main.offsetWidth;
-    main.classList.add('tab-fade');
+function goToTab(tab){
+  currentTab = tab;
+  currentProjectId = null;
+  render();
+  main.classList.remove('tab-fade');
+  void main.offsetWidth;
+  main.classList.add('tab-fade');
+}
+
+document.querySelectorAll('.nav-link').forEach(el=>{
+  el.addEventListener('click', ()=>{
+    goToTab(el.dataset.nav);
+    closeDrawer();
   });
 });
 
@@ -277,6 +295,70 @@ document.getElementById('fab').addEventListener('click', ()=>{
   else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
   else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
 });
+
+/* ---------- Side nav drawer: tap or drag from the right edge ---------- */
+const navDrawer = document.getElementById('navDrawer');
+const navBackdrop = document.getElementById('navBackdrop');
+const navEdge = document.getElementById('navEdge');
+let drawerOpen = false;
+let drawerWidthPx = 260;
+
+function setDrawerX(px){ navDrawer.style.transform = `translateX(${px}px)`; }
+function openDrawer(){
+  drawerOpen = true;
+  navDrawer.classList.remove('dragging');
+  drawerWidthPx = navDrawer.offsetWidth;
+  setDrawerX(0);
+  navBackdrop.classList.add('show');
+  document.querySelectorAll('.nav-link').forEach(el=> el.classList.toggle('active', el.dataset.nav===currentTab));
+}
+function closeDrawer(){
+  drawerOpen = false;
+  navDrawer.classList.remove('dragging');
+  setDrawerX(drawerWidthPx || navDrawer.offsetWidth);
+  navBackdrop.classList.remove('show');
+}
+navBackdrop.addEventListener('click', closeDrawer);
+
+(function(){
+  let dragging=false, startX=0, startPx=0, moved=false;
+  function widthPx(){ return navDrawer.offsetWidth; }
+  function onDown(x){
+    dragging = true; moved = false;
+    startX = x;
+    drawerWidthPx = widthPx();
+    startPx = drawerOpen ? 0 : drawerWidthPx;
+    navDrawer.classList.add('dragging');
+    navBackdrop.classList.add('show');
+  }
+  function onMove(x){
+    if(!dragging) return;
+    const delta = x - startX; // moving right(+)=>close more, moving left(-)=>open more (RTL edge on the right)
+    if(Math.abs(delta) > 4) moved = true;
+    let px = startPx + delta;
+    px = Math.max(0, Math.min(drawerWidthPx, px));
+    setDrawerX(px);
+  }
+  function onUp(x){
+    if(!dragging) return;
+    dragging = false;
+    navDrawer.classList.remove('dragging');
+    const delta = x - startX;
+    if(!moved){
+      // treat as a tap
+      if(drawerOpen) closeDrawer(); else openDrawer();
+      return;
+    }
+    const currentPx = startPx + delta;
+    if(currentPx < drawerWidthPx*0.6) openDrawer(); else closeDrawer();
+  }
+  navEdge.addEventListener('pointerdown', (e)=>{ navEdge.setPointerCapture(e.pointerId); onDown(e.clientX); });
+  navEdge.addEventListener('pointermove', (e)=> onMove(e.clientX));
+  navEdge.addEventListener('pointerup', (e)=> onUp(e.clientX));
+  navEdge.addEventListener('pointercancel', (e)=> onUp(e.clientX));
+})();
+
+document.getElementById('appsFab').addEventListener('click', openAppsMenuModal);
 
 document.addEventListener('click', (e)=>{
   const chip = e.target.closest('[data-contact-chip]');
@@ -303,18 +385,21 @@ function render(){
   }
 }
 
-function renderQuickLinksRow(){
-  if(!DATA.quickLinks || DATA.quickLinks.length===0) return '';
-  return `<div class="quicklinks">${DATA.quickLinks.map(q=>`<button class="btn secondary small" data-qlink="${esc(buildQuickLinkHref(q))}">${esc(q.name)}</button>`).join('')}</div>`;
-}
 function buildQuickLinkHref(q){
   if(q.pkg) return `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${q.pkg};end;`;
   return q.url || '';
 }
-function wireQuickLinks(container){
-  container.querySelectorAll('[data-qlink]').forEach(b=>{
-    b.addEventListener('click', ()=>{ window.location.href = b.dataset.qlink; });
-  });
+function openAppsMenuModal(){
+  const bg = openModalEl(`
+    <h2>📱 אפליקציות מותקנות</h2>
+    ${(!DATA.quickLinks || DATA.quickLinks.length===0)
+      ? `<div class="muted">אין עדיין קישורים מהירים. אפשר להוסיף בלשונית "הגדרות וגיבוי" ← "יומן ואפליקציות".</div>`
+      : DATA.quickLinks.map(q=>`<a class="btn secondary contact-link" href="${esc(buildQuickLinkHref(q))}">${esc(q.name)}</a>`).join('')}
+    <div class="row" style="margin-top:14px;">
+      <button class="btn secondary" id="appsClose">סגור</button>
+    </div>
+  `, {center:true});
+  bg.querySelector('#appsClose').onclick = ()=> closeModal(bg);
 }
 
 /* ---------- Search (projects list) ---------- */
@@ -349,7 +434,6 @@ function contactsOrCompanyMatch(ids, q){
 function renderProjectsList(){
   const filtered = DATA.projects.filter(p=>projectMatchesQuery(p, searchQuery));
   main.innerHTML = `
-    ${renderQuickLinksRow()}
     <input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">
     ${filtered.length===0?`<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.<br>לחץ על + כדי להוסיף פרויקט ראשון.':'לא נמצאו תוצאות.'}</div>`:''}
     ${filtered.map(p=>{
@@ -365,7 +449,6 @@ function renderProjectsList(){
       </div>`;
     }).join('')}
   `;
-  wireQuickLinks(main);
   const sb = document.getElementById('searchBox');
   sb.addEventListener('input', ()=>{ searchQuery = sb.value; renderProjectsListOnly(); });
   main.querySelectorAll('[data-open]').forEach(el=>{
@@ -396,8 +479,7 @@ function renderProjectsListOnly(){
   }
   const box = document.getElementById('searchBox');
   const pos = box.selectionStart;
-  main.innerHTML = `${renderQuickLinksRow()}<input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">${html}`;
-  wireQuickLinks(main);
+  main.innerHTML = `<input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">${html}`;
   const nb = document.getElementById('searchBox');
   nb.focus();
   try{ nb.setSelectionRange(pos,pos); }catch(e){}
@@ -460,7 +542,10 @@ function renderProjectDetail(pid){
     <div class="card" style="margin-top:10px;">
       <div class="item-head">
         <h3>${companyLogoImg(pco,22)} ${esc(p.name)}</h3>
-        <button class="icon-btn" id="editProjBtn">✏️</button>
+        <div class="row" style="gap:2px;">
+          ${p.status!=='won'?`<button class="icon-btn" id="completeProjBtn" title="סמן פרויקט כהושלם">✅</button>`:''}
+          <button class="icon-btn" id="editProjBtn">✏️</button>
+        </div>
       </div>
       ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
       ${p.notes?`<div class="muted">${esc(p.notes)}</div>`:''}
@@ -480,6 +565,12 @@ function renderProjectDetail(pid){
   `;
   document.getElementById('backBtn').onclick = ()=>{ currentProjectId=null; render(); };
   document.getElementById('editProjBtn').onclick = ()=> openProjectModal(p);
+  const completeBtn = document.getElementById('completeProjBtn');
+  if(completeBtn) completeBtn.onclick = ()=>{
+    if(confirm('לסמן את הפרויקט כ"נסגר בהצלחה"? זה לא ישנה את המשימות בתוכו.')){
+      p.status='won'; save(); render();
+    }
+  };
   document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, (ids)=>{ p.contactIds=ids; if(p.primaryContactId && !ids.includes(p.primaryContactId)) p.primaryContactId=''; save(); render();});
   if(p.tasks.length>0){
     document.getElementById('expandAllBtn').onclick = ()=> expandAllInProject(p);
@@ -670,7 +761,7 @@ function renderDashboard(){
           if(it.due){
             const d = new Date(it.due);
             if(d<now){ totalOverdue++; urgent.push({item:it, project:p}); }
-            else if(d-now < 1000*60*60*24*7){ totalDueSoon++; urgent.push({item:it, project:p}); }
+            else if(d-now < 1000*60*60*24*3){ totalDueSoon++; urgent.push({item:it, project:p}); }
           }
           // top clients: use item's primary contact, else attached contacts
           const cids = it.primaryContactId ? [it.primaryContactId] : (it.contactIds||[]);
@@ -722,12 +813,14 @@ function renderDashboard(){
   const topClients = Object.entries(companyOpenCount).sort((a,b)=>b[1]-a[1]).slice(0,5)
     .map(([coId,count])=>({co: DATA.companies.find(c=>c.id===coId), count}));
 
+  const activeDays = itemsByDay.filter(b=>b.items.length>0);
+
   main.innerHTML = `
-    ${renderQuickLinksRow()}
+    <button class="btn" id="goProjectsBtn" style="margin-bottom:12px; width:100%;">📁 מעבר לפרויקטים</button>
     <div class="stat-grid" style="margin-bottom:10px;">
       <div class="stat-card"><div class="num">${totalOpen}</div><div class="lbl">משימות פתוחות</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${totalOverdue}</div><div class="lbl">באיחור</div></div>
-      <div class="stat-card"><div class="num" style="color:var(--yellow)">${totalDueSoon}</div><div class="lbl">קרובות (7 ימים)</div></div>
+      <div class="stat-card"><div class="num" style="color:var(--yellow)">${totalDueSoon}</div><div class="lbl">קרובות (3 ימים)</div></div>
       <div class="stat-card"><div class="num">${DATA.projects.length}</div><div class="lbl">פרויקטים</div></div>
     </div>
 
@@ -747,10 +840,10 @@ function renderDashboard(){
 
     <div class="card">
       <h3>📅 7 הימים הקרובים</h3>
-      ${itemsByDay.map(b=>`
+      ${activeDays.length===0?'<div class="muted">אין משימות מתוכננות בשבוע הקרוב 🎉</div>':activeDays.map(b=>`
         <div class="day-block">
           <h4>${b.date.toLocaleDateString('he-IL',{weekday:'long', day:'2-digit', month:'2-digit'})}</h4>
-          ${b.items.length===0?'<div class="muted">אין משימות</div>':b.items.map(({item,project})=>`
+          ${b.items.map(({item,project})=>`
             <div class="row" data-goto-proj="${project.id}" data-goto-item="${item.id}" style="justify-content:space-between; cursor:pointer;">
               <span style="font-size:13px;">${esc(item.title)}</span>
               <span class="muted">${esc(project.name)}</span>
@@ -790,7 +883,7 @@ function renderDashboard(){
       `).join('')}
     </div>
   `;
-  wireQuickLinks(main);
+  document.getElementById('goProjectsBtn').onclick = ()=> goToTab('projects');
   main.querySelectorAll('[data-goto-item]').forEach(el=>{
     el.addEventListener('click', ()=>{
       currentTab='projects';
