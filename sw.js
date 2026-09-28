@@ -1,4 +1,4 @@
-const CACHE_NAME = 'proj-manager-cache-v12';
+const CACHE_NAME = 'proj-manager-cache-v13';
 const FILES_TO_CACHE = [
   './',
   './index.html',

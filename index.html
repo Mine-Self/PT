@@ -143,7 +143,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-09-28_0802';
+const APP_VERSION = '2026-09-28_1101';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -404,62 +404,129 @@ function contactsOrCompanyMatch(ids, q){
   return false;
 }
 
-function renderProjectsList(){
+function getProjectsView(){ return localStorage.getItem('pm_projects_view')==='client' ? 'client' : 'project'; }
+function getExpandedClients(){
+  try{ return new Set(JSON.parse(localStorage.getItem('pm_client_open')||'[]')); }catch(e){ return new Set(); }
+}
+function setExpandedClients(set){ try{ localStorage.setItem('pm_client_open', JSON.stringify([...set])); }catch(e){} }
+
+function companyAndDescendantIds(id){
+  const ids = new Set([id]);
+  let grew = true, guard = 0;
+  while(grew && guard++ < 20){
+    grew = false;
+    for(const c of DATA.companies){
+      if(c.parentId && ids.has(c.parentId) && !ids.has(c.id)){ ids.add(c.id); grew = true; }
+    }
+  }
+  return ids;
+}
+
+function projectCardHtml(p, groupCompanyId){
+  const stats = countStatus(p.tasks);
+  const pco = DATA.companies.find(x=>x.id===p.companyId);
+  const inGroup = groupCompanyId !== undefined;
+  const subTag = (inGroup && pco && pco.id!==groupCompanyId) ? `<div class="muted">🏢 ${esc(pco.name)}</div>` : '';
+  return `<div class="card" data-open="${p.id}">
+    <div class="item-head">
+      <h3>${companyLogoImg(pco,20)} ${esc(p.name)}</h3>
+      <span class="muted">${statusLabel(p.status)}</span>
+    </div>
+    ${inGroup ? subTag : (pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:'')}
+    <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
+  </div>`;
+}
+
+function projectsByClientHtml(filtered){
+  const expanded = getExpandedClients();
+  const searching = !!searchQuery.trim();
+  const groups = [];
+  for(const co of DATA.companies){
+    const ids = companyAndDescendantIds(co.id);
+    const ps = filtered.filter(p=>ids.has(p.companyId));
+    if(ps.length) groups.push({co, ps});
+  }
+  groups.sort((x,y)=> x.co.name.localeCompare(y.co.name, 'he'));
+  // projects whose company was deleted
+  const orphans = filtered.filter(p=>!DATA.companies.some(c=>c.id===p.companyId));
+  const sections = [['active','פעילים'],['paused','בהמתנה'],['won','נסגרו בהצלחה'],['lost','נפסלו']];
+  const groupHtml = (key, title, logo, ps, coId, sum)=>{
+    const open = searching || expanded.has(key);
+    const body = sections.map(([st,label])=>{
+      const list = ps.filter(p=>p.status===st);
+      if(!list.length) return '';
+      return `<div class="muted" style="font-weight:700; margin:10px 0 4px;">${label} (${list.length})</div>` + list.map(p=>projectCardHtml(p, coId)).join('');
+    }).join('');
+    return `<div class="card" style="padding:0;">
+      <div class="item-head" data-client-toggle="${esc(key)}" style="padding:12px 14px; cursor:pointer;">
+        <h3>${open?'▾':'◂'} ${logo} ${esc(title)}</h3>
+        <span class="muted">${sum}</span>
+      </div>
+      ${open?`<div style="padding:0 10px 10px;">${body}</div>`:''}
+    </div>`;
+  };
+  const summary = ps=>{
+    const live = ps.filter(p=>p.status==='active'||p.status==='paused');
+    let openTasks = 0, overdue = 0;
+    for(const p of live){ const st = countStatus(p.tasks); openTasks += st.total - st.done; overdue += st.overdue; }
+    return `${ps.length} פרויקטים · ${openTasks} משימות פתוחות${overdue?` · <span style="color:var(--red)">${overdue} באיחור</span>`:''}`;
+  };
+  let html = groups.map(g=> groupHtml(g.co.id, g.co.name, companyLogoImg(g.co,20), g.ps, g.co.id, summary(g.ps))).join('');
+  if(orphans.length) html += groupHtml('__none', 'ללא לקוח', '', orphans, null, summary(orphans));
+  return html;
+}
+
+function projectsListInner(){
   const filtered = DATA.projects.filter(p=>projectMatchesQuery(p, searchQuery));
+  const view = getProjectsView();
+  let body;
+  if(filtered.length===0){
+    body = `<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.<br>לחץ על + כדי להוסיף פרויקט ראשון.':'לא נמצאו תוצאות.'}</div>`;
+  } else if(view==='client'){
+    body = projectsByClientHtml(filtered);
+  } else {
+    body = filtered.map(p=>projectCardHtml(p)).join('');
+  }
+  return `<div class="row" style="margin-bottom:10px; gap:8px;">
+      <button class="tab ${view==='project'?'active':''}" data-pview="project">לפי פרויקט</button>
+      <button class="tab ${view==='client'?'active':''}" data-pview="client">לפי לקוח</button>
+    </div>${body}`;
+}
+
+function bindProjectsList(){
+  main.querySelectorAll('[data-open]').forEach(el=>{
+    el.addEventListener('click', ()=>{ currentProjectId = el.dataset.open; render(); });
+  });
+  main.querySelectorAll('[data-pview]').forEach(el=>{
+    el.addEventListener('click', ()=>{ localStorage.setItem('pm_projects_view', el.dataset.pview); renderProjectsListOnly(); });
+  });
+  main.querySelectorAll('[data-client-toggle]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const set = getExpandedClients();
+      const k = el.dataset.clientToggle;
+      if(set.has(k)) set.delete(k); else set.add(k);
+      setExpandedClients(set);
+      renderProjectsListOnly();
+    });
+  });
+}
+
+function renderProjectsList(){
   main.innerHTML = `
     <input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">
-    ${filtered.length===0?`<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.<br>לחץ על + כדי להוסיף פרויקט ראשון.':'לא נמצאו תוצאות.'}</div>`:''}
-    ${filtered.map(p=>{
-      const stats = countStatus(p.tasks);
-      const pco = DATA.companies.find(x=>x.id===p.companyId);
-      return `<div class="card" data-open="${p.id}">
-        <div class="item-head">
-          <h3>${companyLogoImg(pco,20)} ${esc(p.name)}</h3>
-          <span class="muted">${statusLabel(p.status)}</span>
-        </div>
-        ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
-        <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
-      </div>`;
-    }).join('')}
+    <div id="projectsInner">${projectsListInner()}</div>
   `;
   const sb = document.getElementById('searchBox');
   sb.addEventListener('input', ()=>{ searchQuery = sb.value; renderProjectsListOnly(); });
-  main.querySelectorAll('[data-open]').forEach(el=>{
-    el.addEventListener('click', ()=>{ currentProjectId = el.dataset.open; render(); });
-  });
+  bindProjectsList();
 }
 function renderProjectsListOnly(){
-  // re-render just the list part to keep focus in the search box
-  const filtered = DATA.projects.filter(p=>projectMatchesQuery(p, searchQuery));
-  const html = `
-    ${filtered.length===0?`<div class="empty-state">${DATA.projects.length===0?'אין עדיין פרויקטים.':'לא נמצאו תוצאות.'}</div>`:''}
-    ${filtered.map(p=>{
-      const stats = countStatus(p.tasks);
-      const pco = DATA.companies.find(x=>x.id===p.companyId);
-      return `<div class="card" data-open="${p.id}">
-        <div class="item-head">
-          <h3>${companyLogoImg(pco,20)} ${esc(p.name)}</h3>
-          <span class="muted">${statusLabel(p.status)}</span>
-        </div>
-        ${pco?`<div class="muted">${esc(companyChainName(pco))}</div>`:''}
-        <div class="muted">${stats.total} משימות · ${stats.done} הושלמו${stats.overdue?` · <span style="color:var(--red)">${stats.overdue} באיחור</span>`:''}</div>
-      </div>`;
-    }).join('')}
-  `;
-  let holder = main.querySelector('#resultsHolder');
-  if(!holder){
-    // fallback: wrap the previously-rendered cards; simplest is to just re-render whole list without losing focus is complex, so keep it simple by re-running full render but restoring caret.
-  }
-  const box = document.getElementById('searchBox');
-  const pos = box.selectionStart;
-  main.innerHTML = `<input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">${html}`;
-  const nb = document.getElementById('searchBox');
-  nb.focus();
-  try{ nb.setSelectionRange(pos,pos); }catch(e){}
-  nb.addEventListener('input', ()=>{ searchQuery = nb.value; renderProjectsListOnly(); });
-  main.querySelectorAll('[data-open]').forEach(el=>{
-    el.addEventListener('click', ()=>{ currentProjectId = el.dataset.open; render(); });
-  });
+  // re-render only the list, so the search box keeps focus
+  const inner = document.getElementById('projectsInner');
+  if(!inner){ renderProjectsList(); return; }
+  inner.innerHTML = projectsListInner();
+  bindProjectsList();
+  saveView();
 }
 function statusLabel(s){ return {active:'פעיל',won:'נסגר בהצלחה',lost:'נפסל',paused:'בהמתנה'}[s] || s; }
 
@@ -587,7 +654,7 @@ function renderItemHtml(item, depth, project){
         </div>
       </div>
       <div class="row" style="gap:2px;">
-        ${item.due?`<button class="icon-btn" data-gcal="${item.id}" title="הוסף ליומן Google">📅</button>`:''}
+        <button class="icon-btn" data-gcal="${item.id}" title="הוסף ליומן Google">📅</button>
         <button class="icon-btn" data-toggle-status="${item.id}" title="${item.status==='done'?'סמן כפתוח':'סמן כהושלם'}">${item.status==='done'?'↩️':'✅'}</button>
         <button class="icon-btn" data-edit="${item.id}">✏️</button>
         <button class="icon-btn" data-del="${item.id}">🗑️</button>
@@ -1297,7 +1364,7 @@ function openItemModal({item, parentList, depth, project}){
     <label class="row" style="cursor:pointer;">
       <input type="checkbox" id="mAddGcal" style="width:auto;"> פתח הוספה ליומן בעת השמירה
     </label>
-    <button class="btn small secondary" id="mGcalNow" type="button" style="margin-top:4px;" ${(isEdit&&item.due)?'':'disabled'}>📅 הוסף ליומן עכשיו</button>
+    <button class="btn small secondary" id="mGcalNow" type="button" style="margin-top:4px;" >📅 הוסף ליומן עכשיו</button>
     <div class="row" style="margin-top:14px;">
       <button class="btn" id="mSave">שמירה</button>
       <button class="btn secondary" id="mCancel">ביטול</button>
@@ -1371,13 +1438,9 @@ function openItemModal({item, parentList, depth, project}){
   bg.querySelector('#mAddContact').onclick = ()=>{
     openAttachContactModal(workingContactIds, (newIds)=>{ workingContactIds = newIds; renderChips(); });
   };
-  bg.querySelector('#mDue').addEventListener('change', (e)=>{
-    bg.querySelector('#mGcalNow').disabled = !e.target.value;
-  });
   bg.querySelector('#mGcalNow').onclick = ()=>{
     const due = bg.querySelector('#mDue').value;
-    if(!due) return;
-    const tempItem = { id: isEdit?item.id:'', title: bg.querySelector('#mTitle').value.trim()||'(ללא כותרת)', desc: bg.querySelector('#mDesc').value, due, contactIds: workingContactIds, primaryContactId: bg.querySelector('#mPrimary').value };
+    const tempItem = { id: isEdit?item.id:'', title: bg.querySelector('#mTitle').value.trim()||'(ללא כותרת)', desc: bg.querySelector('#mDesc').value, due, recurrence: bg.querySelector('#mRec').value, reminders: workingReminders.filter(r=>r.datetime), contactIds: workingContactIds, primaryContactId: bg.querySelector('#mPrimary').value };
     const url = gcalLink(tempItem, project);
     if(url) window.open(url, '_blank');
   };
@@ -1408,7 +1471,7 @@ function openItemModal({item, parentList, depth, project}){
       savedItem = it;
     }
     save(); closeModal(bg); render();
-    if(addGcal && due){
+    if(addGcal){
       const url = gcalLink(savedItem, project);
       if(url) window.open(url, '_blank');
     }
@@ -1453,7 +1516,7 @@ function openFocusModal(itemId, project){
       <button class="btn" id="fcEdit">✏️ עריכה</button>
       <button class="btn secondary" id="fcToggle">${item.status==='done'?'↩️ סמן כפתוח':'✅ סמן כהושלם'}</button>
       ${depth<3?`<button class="btn secondary" id="fcAddChild">+ הוסף ${['','תת-משימה','תת-תת-משימה'][depth]}</button>`:''}
-      ${item.due?`<button class="btn secondary" id="fcGcal">📅 יומן</button>`:''}
+      <button class="btn secondary" id="fcGcal">📅 יומן</button>
       <button class="btn danger" id="fcDelete">🗑️ מחיקה</button>
     </div>
   `);
@@ -1647,35 +1710,71 @@ function findPrimaryContactCascading(item, project){
   return null;
 }
 
-function gcalLink(item, project){
-  if(!item.due) return null;
-  const start = new Date(item.due);
-  if(isNaN(start.getTime())) return null;
-  const end = new Date(start.getTime()+60*60*1000);
-  const fmt = d=> d.toISOString().replace(/[-:]|\.\d{3}/g,'');
-  const title = project ? `${project.name} - ${item.title}` : item.title;
+function recTypeLabel(t){ return {daily:'יומי',weekly:'שבועי',monthly:'חודשי',workdays:'ימי עבודה',weekend:'סוף שבוע',custom:'ימים ספציפיים'}[t]||''; }
 
-  const contactLines = (item.contactIds||[]).map(cid=>{
+function gcalLink(item, project){
+  const params = new URLSearchParams({ action:'TEMPLATE' });
+
+  // dates: only when the item has a due date; otherwise Google picks its default
+  if(item.due){
+    const start = new Date(item.due);
+    if(!isNaN(start.getTime())){
+      const end = new Date(start.getTime()+60*60*1000);
+      const fmt = d=> d.toISOString().replace(/[-:]|\.\d{3}/g,'');
+      params.set('dates', fmt(start)+'/'+fmt(end));
+    }
+  }
+
+  const co = project ? DATA.companies.find(x=>x.id===project.companyId) : null;
+  const projectTitle = project ? `${project.name} - ${item.title}` : item.title;
+  params.set('text', co ? `${co.name} | ${projectTitle}` : projectTitle);
+
+  // task path (task › sub-task › ...)
+  let pathText = item.title;
+  if(item.id && project){
+    const path = findPathToItem(project.tasks, item.id);
+    if(path && path.length) pathText = path.map(x=>x.title).join(' › ');
+  }
+
+  const contactText = (item.contactIds||[]).map(cid=>{
     const c = DATA.contacts.find(x=>x.id===cid);
-    return c ? `${c.name}${c.phone?' - '+c.phone:''}` : '';
-  }).filter(Boolean);
+    return c ? `${c.name}${c.phone?' ('+c.phone+')':''}` : '';
+  }).filter(Boolean).join(', ');
+
+  // alerts, same as in the app: due date (+ repeat) and extra reminders
+  const alertLines = [];
+  if(item.due){
+    alertLines.push(`• יעד: ${fmtDate(item.due)}${item.recurrence && item.recurrence!=='none' ? ' · חזרה: '+recLabel(item.recurrence) : ''}`);
+  }
+  for(const r of (item.reminders||[])){
+    if(!r.datetime) continue;
+    let rl = `• תזכורת: ${fmtDate(r.datetime)}`;
+    if(r.recurring){
+      rl += ' · חזרה: ' + (recTypeLabel(r.recType)||'');
+      if(r.recType==='custom' && (r.customDays||[]).length) rl += ' (' + r.customDays.slice().sort().map(d=>DAY_SHORT[d]).join(', ') + ')';
+    }
+    alertLines.push(rl);
+  }
 
   const siteUrl = getSiteUrl();
   const deepLink = (siteUrl && item.id && project) ? `${siteUrl}?project=${encodeURIComponent(project.id)}&item=${encodeURIComponent(item.id)}` : '';
 
-  let details = item.desc || '';
-  if(contactLines.length) details += (details?'\n\n':'') + 'אנשי קשר:\n' + contactLines.join('\n');
-  if(deepLink) details += (details?'\n\n':'') + 'קישור למשימה: ' + deepLink;
+  const details = [
+    `לקוח/חברה: ${co ? co.name : ''}`,
+    `פרויקט: ${project ? project.name : ''}`,
+    `משימה: ${pathText}`,
+    `תיאור: ${item.desc || ''}`,
+    `אנשי קשר: ${contactText}`,
+    `התראות:${alertLines.length ? '\n'+alertLines.join('\n') : ''}`,
+    `קישור למשימה: ${deepLink}`
+  ].join('\n');
+  params.set('details', details);
 
   const primaryContact = findPrimaryContactCascading(item, project);
   let location = primaryContact ? getContactAddress(primaryContact) : '';
-  if(!location && project && project.companyId){
-    const pco = DATA.companies.find(x=>x.id===project.companyId);
-    if(pco && pco.address) location = pco.address;
-  }
-
-  const params = new URLSearchParams({ action:'TEMPLATE', text: title, dates: fmt(start)+'/'+fmt(end), details });
+  if(!location && co && co.address) location = co.address;
   if(location) params.set('location', location);
+
   const gcalId = getGcalId();
   let url = 'https://calendar.google.com/calendar/render?'+params.toString();
   if(gcalId) url += '&src='+encodeURIComponent(gcalId);
