@@ -1,10 +1,11 @@
-const CACHE_NAME = 'proj-manager-cache-v10';
+const CACHE_NAME = 'proj-manager-cache-v11';
 const FILES_TO_CACHE = [
   './',
   './index.html',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './icon-maskable-512.png'
 ];
 
 self.addEventListener('install', (evt) => {

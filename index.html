@@ -49,16 +49,14 @@
   .btn.small{padding:6px 11px; font-size:12px;}
   .btn:disabled{opacity:.5; cursor:not-allowed;}
   .fab{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); left:16px; background:var(--primary); color:#fff; border:none; width:56px; height:56px; border-radius:28px; font-size:26px; box-shadow:0 4px 16px rgba(0,0,0,.4); z-index:20;}
-  .fab-apps{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); right:16px; background:var(--panel2); color:var(--text); border:1px solid var(--border); width:50px; height:50px; border-radius:25px; font-size:21px; box-shadow:0 4px 14px rgba(0,0,0,.3); z-index:20;}
-  .nav-edge{position:fixed; top:0; right:0; width:16px; height:100%; z-index:40; background:linear-gradient(to left, rgba(61,139,255,.14), transparent); touch-action:none;}
-  .nav-edge::before{content:''; position:absolute; right:4px; top:50%; transform:translateY(-50%); width:4px; height:52px; border-radius:4px; background:var(--muted); opacity:.5;}
+  .menu-fab{position:fixed; bottom:calc(18px + env(safe-area-inset-bottom,0px)); right:16px; background:var(--primary); color:#fff; border:none; width:56px; height:56px; border-radius:28px; font-size:24px; box-shadow:0 4px 16px rgba(0,0,0,.4); z-index:42; transition:transform 150ms ease;}
+  .menu-fab.open{transform:rotate(90deg);}
   .nav-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:39; opacity:0; pointer-events:none; transition:opacity 200ms ease;}
   .nav-backdrop.show{opacity:1; pointer-events:auto;}
-  .nav-drawer{position:fixed; top:0; right:0; height:100%; width:76%; max-width:300px; background:var(--panel); z-index:41; transform:translateX(100%); box-shadow:-6px 0 22px rgba(0,0,0,.4); padding:18px 16px; padding-top:calc(18px + env(safe-area-inset-top,0px)); padding-bottom:calc(18px + env(safe-area-inset-bottom,0px)); transition:transform 220ms ease;}
-  .nav-drawer.dragging{transition:none;}
-  .nav-drawer h2{font-size:15px; color:var(--muted); margin:0 0 14px;}
-  .nav-drawer .nav-link{display:block; padding:13px 12px; border-radius:12px; font-size:15px; font-weight:700; color:var(--text); margin-bottom:6px; cursor:pointer;}
-  .nav-drawer .nav-link.active{background:var(--primary-container); color:var(--primary);}
+  .menu-bubble{position:fixed; right:16px; bottom:calc(84px + env(safe-area-inset-bottom,0px)); min-width:210px; background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:8px; z-index:41; box-shadow:0 8px 28px rgba(0,0,0,.4); opacity:0; transform:scale(.85) translateY(10px); transform-origin:bottom right; pointer-events:none; transition:opacity 150ms ease, transform 150ms ease;}
+  .menu-bubble.show{opacity:1; transform:none; pointer-events:auto;}
+  .menu-bubble .nav-link{display:block; padding:12px 14px; border-radius:12px; font-size:15px; font-weight:700; color:var(--text); cursor:pointer;}
+  .menu-bubble .nav-link.active{background:var(--primary-container); color:var(--primary);}
   input,select,textarea{
     background:var(--panel2); border:1px solid var(--border); color:var(--text);
     border-radius:var(--radius-sm); padding:9px 11px; font-size:14px; width:100%; font-family:inherit;
@@ -119,19 +117,17 @@
 </header>
 
 <div class="nav-backdrop" id="navBackdrop"></div>
-<div class="nav-drawer" id="navDrawer">
-  <h2 style="margin-top:4px;">ניווט</h2>
+<div class="menu-bubble" id="menuBubble">
   <div class="nav-link" data-nav="dashboard">🏠 דשבורד</div>
   <div class="nav-link" data-nav="projects">📁 פרויקטים</div>
   <div class="nav-link" data-nav="contacts">👤 אנשי קשר</div>
   <div class="nav-link" data-nav="settings">⚙️ הגדרות וגיבוי</div>
 </div>
-<div class="nav-edge" id="navEdge"></div>
 
 <main id="main"></main>
 
 <button class="fab" id="fab">+</button>
-<button class="fab-apps" id="appsFab">📱</button>
+<button class="menu-fab" id="menuFab" aria-label="תפריט">☰</button>
 
 <script>
 /* ================= Data layer ================= */
@@ -146,7 +142,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-09-27_1856';
+const APP_VERSION = '2026-09-28_0534';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -285,7 +281,7 @@ function goToTab(tab){
 document.querySelectorAll('.nav-link').forEach(el=>{
   el.addEventListener('click', ()=>{
     goToTab(el.dataset.nav);
-    closeDrawer();
+    closeMenu();
   });
 });
 
@@ -296,69 +292,26 @@ document.getElementById('fab').addEventListener('click', ()=>{
   else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
 });
 
-/* ---------- Side nav drawer: tap or drag from the right edge ---------- */
-const navDrawer = document.getElementById('navDrawer');
+/* ---------- Menu bubble: floating button at bottom-right ---------- */
+const menuBubble = document.getElementById('menuBubble');
 const navBackdrop = document.getElementById('navBackdrop');
-const navEdge = document.getElementById('navEdge');
-let drawerOpen = false;
-let drawerWidthPx = 260;
-
-function setDrawerX(px){ navDrawer.style.transform = `translateX(${px}px)`; }
-function openDrawer(){
-  drawerOpen = true;
-  navDrawer.classList.remove('dragging');
-  drawerWidthPx = navDrawer.offsetWidth;
-  setDrawerX(0);
+const menuFab = document.getElementById('menuFab');
+let menuOpen = false;
+function openMenu(){
+  menuOpen = true;
+  menuBubble.classList.add('show');
+  menuFab.classList.add('open');
   navBackdrop.classList.add('show');
   document.querySelectorAll('.nav-link').forEach(el=> el.classList.toggle('active', el.dataset.nav===currentTab));
 }
-function closeDrawer(){
-  drawerOpen = false;
-  navDrawer.classList.remove('dragging');
-  setDrawerX(drawerWidthPx || navDrawer.offsetWidth);
+function closeMenu(){
+  menuOpen = false;
+  menuBubble.classList.remove('show');
+  menuFab.classList.remove('open');
   navBackdrop.classList.remove('show');
 }
-navBackdrop.addEventListener('click', closeDrawer);
-
-(function(){
-  let dragging=false, startX=0, startPx=0, moved=false;
-  function widthPx(){ return navDrawer.offsetWidth; }
-  function onDown(x){
-    dragging = true; moved = false;
-    startX = x;
-    drawerWidthPx = widthPx();
-    startPx = drawerOpen ? 0 : drawerWidthPx;
-    navDrawer.classList.add('dragging');
-    navBackdrop.classList.add('show');
-  }
-  function onMove(x){
-    if(!dragging) return;
-    const delta = x - startX; // moving right(+)=>close more, moving left(-)=>open more (RTL edge on the right)
-    if(Math.abs(delta) > 4) moved = true;
-    let px = startPx + delta;
-    px = Math.max(0, Math.min(drawerWidthPx, px));
-    setDrawerX(px);
-  }
-  function onUp(x){
-    if(!dragging) return;
-    dragging = false;
-    navDrawer.classList.remove('dragging');
-    const delta = x - startX;
-    if(!moved){
-      // treat as a tap
-      if(drawerOpen) closeDrawer(); else openDrawer();
-      return;
-    }
-    const currentPx = startPx + delta;
-    if(currentPx < drawerWidthPx*0.6) openDrawer(); else closeDrawer();
-  }
-  navEdge.addEventListener('pointerdown', (e)=>{ navEdge.setPointerCapture(e.pointerId); onDown(e.clientX); });
-  navEdge.addEventListener('pointermove', (e)=> onMove(e.clientX));
-  navEdge.addEventListener('pointerup', (e)=> onUp(e.clientX));
-  navEdge.addEventListener('pointercancel', (e)=> onUp(e.clientX));
-})();
-
-document.getElementById('appsFab').addEventListener('click', openAppsMenuModal);
+menuFab.addEventListener('click', ()=>{ if(menuOpen) closeMenu(); else openMenu(); });
+navBackdrop.addEventListener('click', closeMenu);
 
 document.addEventListener('click', (e)=>{
   const chip = e.target.closest('[data-contact-chip]');
@@ -385,22 +338,6 @@ function render(){
   }
 }
 
-function buildQuickLinkHref(q){
-  if(q.pkg) return `intent://#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${q.pkg};end;`;
-  return q.url || '';
-}
-function openAppsMenuModal(){
-  const bg = openModalEl(`
-    <h2>📱 אפליקציות מותקנות</h2>
-    ${(!DATA.quickLinks || DATA.quickLinks.length===0)
-      ? `<div class="muted">אין עדיין קישורים מהירים. אפשר להוסיף בלשונית "הגדרות וגיבוי" ← "יומן ואפליקציות".</div>`
-      : DATA.quickLinks.map(q=>`<a class="btn secondary contact-link" href="${esc(buildQuickLinkHref(q))}">${esc(q.name)}</a>`).join('')}
-    <div class="row" style="margin-top:14px;">
-      <button class="btn secondary" id="appsClose">סגור</button>
-    </div>
-  `, {center:true});
-  bg.querySelector('#appsClose').onclick = ()=> closeModal(bg);
-}
 
 /* ---------- Search (projects list) ---------- */
 function projectMatchesQuery(project, q){
@@ -816,7 +753,6 @@ function renderDashboard(){
   const activeDays = itemsByDay.filter(b=>b.items.length>0);
 
   main.innerHTML = `
-    <button class="btn" id="goProjectsBtn" style="margin-bottom:12px; width:100%;">📁 מעבר לפרויקטים</button>
     <div class="stat-grid" style="margin-bottom:10px;">
       <div class="stat-card"><div class="num">${totalOpen}</div><div class="lbl">משימות פתוחות</div></div>
       <div class="stat-card"><div class="num" style="color:var(--red)">${totalOverdue}</div><div class="lbl">באיחור</div></div>
@@ -883,7 +819,6 @@ function renderDashboard(){
       `).join('')}
     </div>
   `;
-  document.getElementById('goProjectsBtn').onclick = ()=> goToTab('projects');
   main.querySelectorAll('[data-goto-item]').forEach(el=>{
     el.addEventListener('click', ()=>{
       currentTab='projects';
@@ -937,7 +872,7 @@ function renderContactsList(){
         </div>
         ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
         ${co?`<div class="muted">${companyInline(co,16)}</div>`:''}
-        ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}</div>`:''}
+        ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}${(()=>{const mc=DATA.companies.find(x=>x.id===mgr.companyId);return mc?' – '+esc(mc.name):'';})()}</div>`:''}
         <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
         ${c.address?`<div class="muted">📍 ${esc(c.address)}</div>`:''}
         ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
@@ -1027,7 +962,7 @@ function openContactDetailModal(contactId){
     <h2>👤 ${esc(c.name)}</h2>
     ${c.role?`<div class="muted">${esc(c.role)}</div>`:''}
     ${co?`<div class="muted">${companyInline(co,16)}</div>`:''}
-    ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}</div>`:''}
+    ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}${(()=>{const mc=DATA.companies.find(x=>x.id===mgr.companyId);return mc?' – '+esc(mc.name):'';})()}</div>`:''}
     <div style="margin-top:10px;">
       ${c.phone?`<a class="btn secondary contact-link" href="tel:${esc(c.phone)}">📞 חייג ל-${esc(c.phone)}</a>`:''}
       ${c.email?`<a class="btn secondary contact-link" href="mailto:${esc(c.email)}">✉️ שלח אימייל</a>`:''}
@@ -1081,23 +1016,12 @@ function renderSettings(){
         ${DAY_FULL.map((n,i)=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-wd="${i}" style="width:auto;" ${workdays.includes(i)?'checked':''}> ${n}</label>`).join('')}
       </div>
     `},
-    { id:'calapps', title:'📅 יומן ואפליקציות', body: `
+    { id:'calapps', title:'📅 יומן', body: `
       <label>מזהה יומן Google (Calendar ID) - אופציונלי</label>
       <input id="gcalIdInput" placeholder="לדוגמה: xxxxxxxx@group.calendar.google.com" value="${esc(gcalId)}">
       <label>כתובת האתר שלי (GitHub Pages)</label>
       <input id="siteUrlInput" placeholder="https://username.github.io/projects-app/" value="${esc(siteUrl)}">
       <div class="footer-note" style="margin-top:6px;">משמש ליצירת קישור חזרה למשימה מתוך הערות אירוע היומן.</div>
-      <label style="margin-top:14px;">קישורים מהירים לאפליקציות מותקנות</label>
-      <div class="footer-note">
-        פותח את האפליקציה המותקנת בטלפון עצמה (לא אתר) לפי "שם חבילה" (Package name).
-        <b>איך מוצאים:</b> חפש את האפליקציה ב-Google Play מהדפדפן, והעתק מהכתובת את מה שאחרי <code>id=</code> (למשל com.whatsapp).
-      </div>
-      <div id="qlList" style="margin-top:8px;"></div>
-      <div class="row" style="margin-top:6px;">
-        <input id="qlName" placeholder="שם (למשל וואטסאפ)" style="flex:1;">
-        <input id="qlPkg" placeholder="שם חבילה, למשל com.whatsapp" style="flex:2;">
-      </div>
-      <button class="btn small secondary" id="qlAdd" style="margin-top:6px;">+ הוסף קישור מהיר</button>
     `},
     { id:'notif', title:'🔔 התראות', body: `
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
@@ -1153,44 +1077,6 @@ function renderSettings(){
   if(settingsOpenSection==='calapps'){
     document.getElementById('gcalIdInput').onchange = (e)=>{ localStorage.setItem('pm_gcal_id', e.target.value.trim()); };
     document.getElementById('siteUrlInput').onchange = (e)=>{ localStorage.setItem('pm_site_url', e.target.value.trim()); };
-    let editIndex = null;
-    function renderQl(){
-      document.getElementById('qlList').innerHTML = DATA.quickLinks.map((q,i)=>`
-        <div class="row" style="justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--border);">
-          <span style="font-size:13px;">${esc(q.name)} <span class="muted">${esc(q.pkg||q.url||'')}</span></span>
-          <div class="row" style="gap:2px;">
-            <button class="icon-btn" data-qledit="${i}">✏️</button>
-            <button class="icon-btn" data-qldel="${i}">🗑️</button>
-          </div>
-        </div>
-      `).join('') || '<div class="muted">אין קישורים מהירים עדיין</div>';
-      document.querySelectorAll('[data-qldel]').forEach(b=>{
-        b.onclick = ()=>{
-          DATA.quickLinks.splice(+b.dataset.qldel,1); save();
-          if(editIndex===+b.dataset.qldel){ editIndex=null; document.getElementById('qlName').value=''; document.getElementById('qlPkg').value=''; document.getElementById('qlAdd').textContent='+ הוסף קישור מהיר'; }
-          renderQl();
-        };
-      });
-      document.querySelectorAll('[data-qledit]').forEach(b=>{
-        b.onclick = ()=>{
-          const i = +b.dataset.qledit;
-          editIndex = i;
-          document.getElementById('qlName').value = DATA.quickLinks[i].name;
-          document.getElementById('qlPkg').value = DATA.quickLinks[i].pkg || DATA.quickLinks[i].url || '';
-          document.getElementById('qlAdd').textContent = '💾 עדכן קישור מהיר';
-        };
-      });
-    }
-    renderQl();
-    document.getElementById('qlAdd').onclick = ()=>{
-      const name = document.getElementById('qlName').value.trim();
-      const pkg = document.getElementById('qlPkg').value.trim();
-      if(!name || !pkg){ alert('נא למלא שם ושם חבילה'); return; }
-      if(editIndex!==null){ DATA.quickLinks[editIndex] = {name, pkg}; editIndex=null; document.getElementById('qlAdd').textContent='+ הוסף קישור מהיר'; }
-      else DATA.quickLinks.push({name, pkg});
-      save(); renderQl();
-      document.getElementById('qlName').value=''; document.getElementById('qlPkg').value='';
-    };
   }
 
   if(settingsOpenSection==='notif'){
@@ -1600,7 +1486,7 @@ function openContactModal(contact){
   const mgrSel = bg.querySelector('#cManager');
   mgrSel.innerHTML = `<option value="">ללא</option>` + DATA.contacts
     .filter(c=> !isEdit || c.id!==contact.id)
-    .map(c=>`<option value="${c.id}" ${isEdit&&contact.managerId===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+    .map(c=>{ const mco = DATA.companies.find(x=>x.id===c.companyId); return `<option value="${c.id}" ${isEdit&&contact.managerId===c.id?'selected':''}>${esc(c.name)}${mco?' – '+esc(mco.name):''}</option>`; }).join('');
   bg.querySelector('#cAddCompany').onclick = ()=>{
     openCompanyModal(null, (newCo)=>{ fillCompanySelect(newCo.id); });
   };
