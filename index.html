@@ -143,7 +143,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-09-28_1101';
+const APP_VERSION = '2026-10-02_0000';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -151,12 +151,91 @@ if(!DATA.quickLinks) DATA.quickLinks = [];
 function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 
+/* ---------- Sort / hide-closed / updates / backup helpers ---------- */
+function getSort(){ return localStorage.getItem('pm_sort') || 'created'; }
+const SORT_LABELS = {created:'סדר יצירה', due:'תאריך יעד', name:'שם (א-ב)'};
+function cycleSort(){ const o=['created','due','name']; localStorage.setItem('pm_sort', o[(o.indexOf(getSort())+1)%3]); }
+function sortBtnHtml(){ return `<button class="btn small secondary" data-sort-cycle title="החלף מיון">⇅ ${SORT_LABELS[getSort()]}</button>`; }
+function projectNextDue(p){ let m=''; (function w(a){ a.forEach(t=>{ if(t.status!=='done' && t.due && (!m || t.due<m)) m=t.due; w(t.children||[]); }); })(p.tasks||[]); return m; }
+function sortProjects(list){
+  const s=getSort(); if(s==='created') return list;
+  const a=list.slice();
+  if(s==='name') a.sort((x,y)=> x.name.localeCompare(y.name,'he'));
+  else a.sort((x,y)=>{ const dx=projectNextDue(x), dy=projectNextDue(y); if(dx===dy) return 0; if(!dx) return 1; if(!dy) return -1; return dx<dy?-1:1; });
+  return a;
+}
+function getHideClosed(){ return localStorage.getItem('pm_hide_closed')==='1'; }
+function updatesSorted(item){ return (item.updates||[]).slice().sort((a,b)=> (a.at<b.at)?1:(a.at>b.at?-1:0)); }
+function latestUpdate(item){ return updatesSorted(item)[0] || null; }
+function createdLineHtml(o){ return o && o.created ? `<div class="muted" style="margin-top:4px;">נוצר: ${fmtDate(o.created)}</div>` : ''; }
+const BACKUP_FREQ = {none:'ללא', daily:'יומי', workdays:'ימי עבודה', weekly:'שבועי', biweekly:'דו-שבועי', monthly:'חודשי'};
+function getBackupFreq(){ return localStorage.getItem('pm_backup_freq') || 'none'; }
+function pad2(n){ return String(n).padStart(2,'0'); }
+function doBackupExport(){
+  const d = new Date();
+  const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `pm-backup_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}.json`;
+  a.click();
+  localStorage.setItem('pm_last_backup', d.toISOString());
+  localStorage.removeItem('pm_backup_snooze');
+  updateBackupBanner();
+}
+function backupDue(){
+  const f = getBackupFreq(); if(f==='none') return false;
+  const now = new Date();
+  const lastIso = localStorage.getItem('pm_last_backup');
+  if(!lastIso) return f!=='workdays' || getWorkdays().includes(now.getDay());
+  const last = new Date(lastIso);
+  const day0 = d=> new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diff = Math.round((day0(now) - day0(last)) / 86400000);
+  if(f==='daily') return diff>=1;
+  if(f==='workdays') return diff>=1 && getWorkdays().includes(now.getDay());
+  if(f==='weekly') return diff>=7;
+  if(f==='biweekly') return diff>=14;
+  const nxt = new Date(last); nxt.setMonth(nxt.getMonth()+1);
+  return now >= nxt;
+}
+function backupBannerVisible(){
+  if(!backupDue()) return false;
+  const sn = parseInt(localStorage.getItem('pm_backup_snooze')||'0',10);
+  return !(sn && Date.now() < sn);
+}
+function updateBackupBanner(){
+  let el = document.getElementById('backupBanner');
+  const show = backupBannerVisible();
+  if(!show){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'backupBanner';
+    el.className = 'banner';
+    el.style.cursor = 'default';
+    el.innerHTML = `<div>💾 הגיע הזמן לגבות את המידע</div><div class="row" style="margin-top:8px;"><button class="btn small" id="bkNow">גבה כעת</button><button class="btn small secondary" id="bkSnooze">דחה עד מחר</button></div>`;
+    el.querySelector('#bkNow').onclick = ()=> doBackupExport();
+    el.querySelector('#bkSnooze').onclick = ()=>{
+      const t = new Date(); t.setDate(t.getDate()+1); t.setHours(0,0,0,0);
+      localStorage.setItem('pm_backup_snooze', String(t.getTime()));
+      updateBackupBanner();
+    };
+  }
+  const m = document.getElementById('main');
+  if(el.parentNode !== m || m.firstChild !== el) m.prepend(el);
+  const today = new Date().toDateString();
+  if('Notification' in window && Notification.permission==='granted' && localStorage.getItem('pm_backup_notified')!==today){
+    localStorage.setItem('pm_backup_notified', today);
+    const opts = { body:'הגיע הזמן לגבות את המידע', icon:'icon-192.png', badge:'icon-192.png', tag:'backup-reminder' };
+    if('serviceWorker' in navigator && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title:'💾 גיבוי', options: opts});
+    else { try{ new Notification('💾 גיבוי', opts); }catch(e){} }
+  }
+}
+
 /* ---------- Item helpers ---------- */
 function newItem(title){
-  return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], primaryContactId:'', children:[], lastNotified:'', reminders:[] };
+  return { id: uid(), title, desc:'', due:'', recurrence:'none', status:'open', contactIds:[], primaryContactId:'', children:[], lastNotified:'', reminders:[], location:'', updates:[], created: toLocalInputValue(new Date()) };
 }
 function newProject(name){
-  return { id: uid(), name, status:'active', notes:'', companyId:'', contactIds:[], primaryContactId:'', tasks:[] };
+  return { id: uid(), name, status:'active', notes:'', companyId:'', contactIds:[], primaryContactId:'', tasks:[], created: toLocalInputValue(new Date()) };
 }
 function extractDomain(url){
   if(!url) return '';
@@ -315,6 +394,7 @@ menuFab.addEventListener('click', ()=>{ if(menuOpen) closeMenu(); else openMenu(
 navBackdrop.addEventListener('click', closeMenu);
 
 document.addEventListener('click', (e)=>{
+  if(e.target.closest('[data-sort-cycle]')){ cycleSort(); render(); return; }
   const chip = e.target.closest('[data-contact-chip]');
   if(chip){ openContactDetailModal(chip.dataset.contactChip); }
 });
@@ -371,6 +451,7 @@ function render(){
   } else {
     renderSettings();
   }
+  updateBackupBanner();
   saveView();
 }
 
@@ -477,7 +558,8 @@ function projectsByClientHtml(filtered){
 }
 
 function projectsListInner(){
-  const filtered = DATA.projects.filter(p=>projectMatchesQuery(p, searchQuery));
+  let filtered = sortProjects(DATA.projects.filter(p=>projectMatchesQuery(p, searchQuery)));
+  if(getHideClosed()) filtered = filtered.filter(p=>p.status!=='won' && p.status!=='lost');
   const view = getProjectsView();
   let body;
   if(filtered.length===0){
@@ -490,6 +572,8 @@ function projectsListInner(){
   return `<div class="row" style="margin-bottom:10px; gap:8px;">
       <button class="tab ${view==='project'?'active':''}" data-pview="project">לפי פרויקט</button>
       <button class="tab ${view==='client'?'active':''}" data-pview="client">לפי לקוח</button>
+      ${sortBtnHtml()}
+      <label class="row" style="cursor:pointer; margin-right:auto;"><input type="checkbox" data-hide-closed style="width:auto;" ${getHideClosed()?'checked':''}> הסתר סגורים</label>
     </div>${body}`;
 }
 
@@ -499,6 +583,9 @@ function bindProjectsList(){
   });
   main.querySelectorAll('[data-pview]').forEach(el=>{
     el.addEventListener('click', ()=>{ localStorage.setItem('pm_projects_view', el.dataset.pview); renderProjectsListOnly(); });
+  });
+  main.querySelectorAll('[data-hide-closed]').forEach(el=>{
+    el.addEventListener('change', ()=>{ localStorage.setItem('pm_hide_closed', el.checked?'1':'0'); renderProjectsListOnly(); });
   });
   main.querySelectorAll('[data-client-toggle]').forEach(el=>{
     el.addEventListener('click', ()=>{
@@ -569,6 +656,9 @@ function sortedSiblings(items){
   return items.map((it,idx)=>({it,idx})).sort((a,b)=>{
     const ad = a.it.status==='done'?1:0, bd = b.it.status==='done'?1:0;
     if(ad!==bd) return ad-bd;
+    const so = getSort();
+    if(so==='name') return a.it.title.localeCompare(b.it.title,'he');
+    if(so==='due'){ const x=a.it.due, y=b.it.due; if(x&&y&&x!==y) return x<y?-1:1; if(x&&!y) return -1; if(!x&&y) return 1; }
     return a.idx-b.idx;
   }).map(x=>x.it);
 }
@@ -596,6 +686,7 @@ function renderProjectDetail(pid){
     ${p.tasks.length>0?`<div class="row" style="margin-bottom:4px;">
       <button class="btn small secondary" id="expandAllBtn">הרחב הכל</button>
       <button class="btn small secondary" id="collapseAllBtn">כווץ הכל</button>
+      ${sortBtnHtml()}
       <label class="row" style="cursor:pointer; margin-right:auto;">
         <input type="checkbox" id="hideDoneChk" style="width:auto;" ${hideCompletedInProject?'checked':''}> הסתר הושלמו
       </label>
@@ -650,6 +741,7 @@ function renderItemHtml(item, depth, project){
             ${esc(item.title)}<span class="status-pill">${statusText}</span>
           </span>
           <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
+          ${latestUpdate(item)?`<div class="muted" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:68vw;">📝 ${esc(latestUpdate(item).text)}</div>`:''}
           <div>${renderContactChips(item.contactIds)}${item.primaryContactId?` <span class="muted">⭐ ראשי</span>`:''}</div>
         </div>
       </div>
@@ -1109,6 +1201,10 @@ function renderSettings(){
         <option value="expanded" ${expandDef==='expanded'?'selected':''}>הכל פתוח ומורחב</option>
         <option value="collapsed" ${expandDef==='collapsed'?'selected':''}>הכל מכווץ</option>
       </select>
+      <label>מיון (פרויקטים ומשימות)</label>
+      <select id="sortSel">
+        ${Object.entries(SORT_LABELS).map(([k,l])=>`<option value="${k}" ${getSort()===k?'selected':''}>${l}</option>`).join('')}
+      </select>
       <label>יום ראשון בשבוע</label>
       <select id="firstDaySel">
         <option value="0" ${firstDay===0?'selected':''}>ראשון</option>
@@ -1131,7 +1227,12 @@ function renderSettings(){
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
     `},
     { id:'backup', title:'💾 גיבוי ומידע', body: `
-      <div class="row">
+      <div class="muted">גיבוי אחרון: <b>${localStorage.getItem('pm_last_backup') ? fmtDate(localStorage.getItem('pm_last_backup')) : 'טרם בוצע'}</b></div>
+      <label>תזכורת לגיבוי</label>
+      <select id="backupFreqSel">
+        ${Object.entries(BACKUP_FREQ).map(([k,l])=>`<option value="${k}" ${getBackupFreq()===k?'selected':''}>${l}</option>`).join('')}
+      </select>
+      <div class="row" style="margin-top:10px;">
         <button class="btn" id="exportBtn">ייצוא גיבוי מלא (JSON)</button>
         <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
       </div>
@@ -1169,6 +1270,7 @@ function renderSettings(){
   if(settingsOpenSection==='general'){
     document.getElementById('themeSel').onchange = (e)=>{ localStorage.setItem('pm_theme', e.target.value); applyTheme(); };
     document.getElementById('expandDefSel').onchange = (e)=>{ localStorage.setItem('pm_expand_default', e.target.value); };
+    document.getElementById('sortSel').onchange = (e)=>{ localStorage.setItem('pm_sort', e.target.value); };
     document.getElementById('firstDaySel').onchange = (e)=>{ localStorage.setItem('pm_first_day', e.target.value); };
     document.querySelectorAll('[data-wd]').forEach(cb=>{
       cb.onchange = ()=>{
@@ -1192,13 +1294,8 @@ function renderSettings(){
   }
 
   if(settingsOpenSection==='backup'){
-    document.getElementById('exportBtn').onclick = ()=>{
-      const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `גיבוי-פרויקטים-${new Date().toISOString().slice(0,10)}.json`;
-      a.click();
-    };
+    document.getElementById('backupFreqSel').onchange = (e)=>{ localStorage.setItem('pm_backup_freq', e.target.value); localStorage.removeItem('pm_backup_snooze'); updateBackupBanner(); };
+    document.getElementById('exportBtn').onclick = ()=>{ doBackupExport(); renderSettings(); };
     document.getElementById('importBtn').onclick = ()=> document.getElementById('importFile').click();
     document.getElementById('importFile').onchange = (e)=>{
       const file = e.target.files[0];
@@ -1252,6 +1349,7 @@ function openProjectModal(project){
   let workingContactIds = isEdit ? [...(project.contactIds||[])] : [];
   const bg = openModalEl(`
     <h2>${isEdit?'עריכת פרויקט':'פרויקט חדש'}</h2>
+    ${isEdit?createdLineHtml(project):''}
     <label>שם הפרויקט</label>
     <input id="mName" value="${isEdit?esc(project.name):''}">
     <label>לקוח / חברה *</label>
@@ -1342,10 +1440,13 @@ function openItemModal({item, parentList, depth, project}){
   let workingReminders = isEdit ? (item.reminders||[]).map(r=>({...r, customDays: r.customDays?[...r.customDays]:[]})) : [];
   const bg = openModalEl(`
     <h2>${isEdit?'עריכת פריט':'פריט חדש'}</h2>
+    ${isEdit?createdLineHtml(item):''}
     <label>כותרת</label>
     <input id="mTitle" value="${isEdit?esc(item.title):''}">
     <label>תיאור</label>
     <textarea id="mDesc" rows="2">${isEdit?esc(item.desc||''):''}</textarea>
+    <label>מיקום (אם ריק - נלקח מכתובת איש הקשר/החברה)</label>
+    <input id="mLocation" value="${isEdit?esc(item.location||''):''}">
     <label>תאריך ושעת יעד</label>
     <input id="mDue" type="datetime-local" value="${isEdit&&item.due?item.due:''}">
     <label>תזכורת חוזרת (מחושבת על בסיס תאריך היעד)</label>
@@ -1440,7 +1541,7 @@ function openItemModal({item, parentList, depth, project}){
   };
   bg.querySelector('#mGcalNow').onclick = ()=>{
     const due = bg.querySelector('#mDue').value;
-    const tempItem = { id: isEdit?item.id:'', title: bg.querySelector('#mTitle').value.trim()||'(ללא כותרת)', desc: bg.querySelector('#mDesc').value, due, recurrence: bg.querySelector('#mRec').value, reminders: workingReminders.filter(r=>r.datetime), contactIds: workingContactIds, primaryContactId: bg.querySelector('#mPrimary').value };
+    const tempItem = { id: isEdit?item.id:'', location: bg.querySelector('#mLocation').value.trim(), title: bg.querySelector('#mTitle').value.trim()||'(ללא כותרת)', desc: bg.querySelector('#mDesc').value, due, recurrence: bg.querySelector('#mRec').value, reminders: workingReminders.filter(r=>r.datetime), contactIds: workingContactIds, primaryContactId: bg.querySelector('#mPrimary').value };
     const url = gcalLink(tempItem, project);
     if(url) window.open(url, '_blank');
   };
@@ -1451,6 +1552,7 @@ function openItemModal({item, parentList, depth, project}){
     const due = bg.querySelector('#mDue').value;
     const rec = bg.querySelector('#mRec').value;
     const desc = bg.querySelector('#mDesc').value;
+    const loc = bg.querySelector('#mLocation').value.trim();
     const primary = bg.querySelector('#mPrimary').value;
     const addGcal = bg.querySelector('#mAddGcal').checked;
     const cleanReminders = workingReminders.filter(r=>r.datetime).map(r=>({
@@ -1460,12 +1562,12 @@ function openItemModal({item, parentList, depth, project}){
     }));
     let savedItem;
     if(isEdit){
-      item.title=title; item.desc=desc; item.due=due; item.recurrence=rec; item.contactIds=workingContactIds;
+      item.title=title; item.desc=desc; item.location=loc; item.due=due; item.recurrence=rec; item.contactIds=workingContactIds;
       item.primaryContactId=primary; item.reminders=cleanReminders;
       savedItem = item;
     } else {
       const it = newItem(title);
-      it.desc=desc; it.due=due; it.recurrence=rec; it.contactIds=workingContactIds;
+      it.desc=desc; it.location=loc; it.due=due; it.recurrence=rec; it.contactIds=workingContactIds;
       it.primaryContactId=primary; it.reminders=cleanReminders;
       parentList.push(it);
       savedItem = it;
@@ -1502,10 +1604,16 @@ function openFocusModal(itemId, project){
     <div class="muted">${label} · ${statusText}</div>
     <h2>${esc(item.title)}</h2>
     ${item.desc?`<div class="muted" style="white-space:pre-wrap;">${esc(item.desc)}</div>`:''}
+    ${item.location?`<div class="muted" style="margin-top:6px;">📍 ${esc(item.location)}</div>`:''}
     ${item.due?`<div class="muted" style="margin-top:6px;">⏰ ${fmtDate(item.due)}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}</div>`:''}
     ${(item.reminders||[]).length?`<div class="muted" style="margin-top:4px;">🔔 ${item.reminders.length} תזכורות נוספות</div>`:''}
     ${item.contactIds && item.contactIds.length?`<div style="margin-top:8px;">${renderContactChips(item.contactIds)}</div>`:''}
     ${primary?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${esc(primary.name)}</div>`:''}
+
+    <label style="margin-top:14px;">עדכונים</label>
+    <div id="fcUpdates"></div>
+    <button class="btn small secondary" id="fcAddUpd" style="margin-top:6px;">+ הוסף עדכון</button>
+    ${createdLineHtml(item)}
 
     ${children.length?`
       <label style="margin-top:14px;">תת-פריטים (${children.length})</label>
@@ -1520,6 +1628,27 @@ function openFocusModal(itemId, project){
       <button class="btn danger" id="fcDelete">🗑️ מחיקה</button>
     </div>
   `);
+  let showAllUpd = false;
+  function drawUpdates(){
+    const all = updatesSorted(item);
+    const shown = showAllUpd ? all : all.slice(0,3);
+    bg.querySelector('#fcUpdates').innerHTML = shown.map(u=>`
+      <div class="card" style="padding:8px; margin-top:6px;">
+        <div class="item-head"><span class="muted">${fmtDate(u.at)}</span>
+          <span class="row" style="gap:2px;"><button class="icon-btn" data-upd-edit="${u.id}">✏️</button><button class="icon-btn" data-upd-del="${u.id}">🗑️</button></span></div>
+        <div style="white-space:pre-wrap; font-size:13px;">${esc(u.text)}</div>
+      </div>`).join('') || '<div class="muted">אין עדכונים</div>';
+    if(all.length>3){
+      bg.querySelector('#fcUpdates').insertAdjacentHTML('beforeend', `<button class="btn small secondary" id="updMore" style="margin-top:6px;">${showAllUpd?'הצג פחות':`הצג הכול (${all.length})`}</button>`);
+      bg.querySelector('#updMore').onclick = ()=>{ showAllUpd=!showAllUpd; drawUpdates(); };
+    }
+    bg.querySelectorAll('[data-upd-edit]').forEach(b=> b.onclick = ()=> openUpdateModal(item, item.updates.find(x=>x.id===b.dataset.updEdit), ()=>{ drawUpdates(); render(); }));
+    bg.querySelectorAll('[data-upd-del]').forEach(b=> b.onclick = ()=>{
+      if(confirm('למחוק את העדכון?')){ item.updates = item.updates.filter(x=>x.id!==b.dataset.updDel); save(); drawUpdates(); render(); }
+    });
+  }
+  drawUpdates();
+  bg.querySelector('#fcAddUpd').onclick = ()=> openUpdateModal(item, null, ()=>{ drawUpdates(); render(); });
   if(children.length){
     bg.querySelector('#focusChildren').innerHTML = children.map(c=>`
       <div class="card" data-focus-child="${c.id}" style="cursor:pointer; margin-top:6px;">
@@ -1553,7 +1682,32 @@ function openFocusModal(itemId, project){
   };
 }
 
-function openContactModal(contact){
+function openUpdateModal(item, upd, onDone){
+  const isEdit = !!upd;
+  const bg = openModalEl(`
+    <h2>${isEdit?'עריכת עדכון':'עדכון חדש'}</h2>
+    <label>תאריך ושעה</label>
+    <input id="uAt" type="datetime-local" value="${isEdit?upd.at:toLocalInputValue(new Date())}">
+    <label>טקסט</label>
+    <textarea id="uText" rows="4">${isEdit?esc(upd.text):''}</textarea>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" id="uSave">שמירה</button>
+      <button class="btn secondary" id="uCancel">ביטול</button>
+    </div>
+  `);
+  bg.querySelector('#uCancel').onclick = ()=> closeModal(bg);
+  bg.querySelector('#uSave').onclick = ()=>{
+    const text = bg.querySelector('#uText').value.trim();
+    if(!text){ alert('נא להזין טקסט'); return; }
+    const at = bg.querySelector('#uAt').value || toLocalInputValue(new Date());
+    if(!item.updates) item.updates = [];
+    if(isEdit){ upd.text = text; upd.at = at; }
+    else item.updates.push({id: uid(), text, at});
+    save(); closeModal(bg); onDone();
+  };
+}
+
+function openContactModal(contact, onSaved){
   const isEdit = !!contact;
   const bg = openModalEl(`
     <h2>${isEdit?'עריכת איש קשר':'איש קשר חדש'}</h2>
@@ -1606,8 +1760,10 @@ function openContactModal(contact){
       address: bg.querySelector('#cAddress').value, notes: bg.querySelector('#cNotes').value
     };
     if(isEdit) Object.assign(contact, vals);
-    else DATA.contacts.push({id: uid(), ...vals});
+    let created = null;
+    if(!isEdit){ created = {id: uid(), ...vals}; DATA.contacts.push(created); }
     save(); closeModal(bg); render();
+    if(created && onSaved) onSaved(created);
   };
 }
 
@@ -1668,25 +1824,33 @@ function openAttachContactModal(currentIds, onDone){
   let working = [...currentIds];
   const bg = openModalEl(`
     <h2>שיוך אנשי קשר</h2>
-    ${DATA.contacts.length===0?'<div class="muted">אין אנשי קשר עדיין. הוסף מהלשונית "אנשי קשר".</div>':''}
-    <div id="attachList"></div>
+    <input id="attachSearch" placeholder="🔍 חיפוש איש קשר או חברה..." style="margin-bottom:8px;">
+    <button class="btn small secondary" id="attachNew" type="button">+ איש קשר חדש</button>
+    <div id="attachList" style="margin-top:8px;"></div>
     <div class="row" style="margin-top:14px;">
       <button class="btn" id="attachSave">אישור</button>
       <button class="btn secondary" id="attachCancel">ביטול</button>
     </div>
   `);
-  bg.querySelector('#attachList').innerHTML = DATA.contacts.map(c=>`
-    <label class="row" style="justify-content:flex-start; cursor:pointer;">
-      <input type="checkbox" style="width:auto;" data-cid="${c.id}" ${working.includes(c.id)?'checked':''}>
-      ${esc(c.name)} <span class="muted">${esc(c.role||'')}</span>
-    </label>
-  `).join('');
-  bg.querySelectorAll('[data-cid]').forEach(cb=>{
-    cb.onchange = ()=>{
-      if(cb.checked) working.push(cb.dataset.cid);
-      else working = working.filter(id=>id!==cb.dataset.cid);
-    };
-  });
+  function draw(){
+    const q = bg.querySelector('#attachSearch').value.trim().toLowerCase();
+    const rows = DATA.contacts.map(c=>({c, co: DATA.companies.find(x=>x.id===c.companyId)}))
+      .filter(({c,co})=> !q || (c.name+' '+(c.role||'')+' '+(co?companyChainName(co):'')).toLowerCase().includes(q));
+    bg.querySelector('#attachList').innerHTML = rows.map(({c,co})=>`
+      <label class="row" style="justify-content:flex-start; cursor:pointer;">
+        <input type="checkbox" style="width:auto;" data-cid="${c.id}" ${working.includes(c.id)?'checked':''}>
+        ${esc(c.name)} <span class="muted">${esc(c.role||'')}${co?` · 🏢 ${esc(co.name)}`:''}</span>
+      </label>`).join('') || '<div class="muted">לא נמצאו אנשי קשר</div>';
+    bg.querySelectorAll('[data-cid]').forEach(cb=>{
+      cb.onchange = ()=>{
+        if(cb.checked){ if(!working.includes(cb.dataset.cid)) working.push(cb.dataset.cid); }
+        else working = working.filter(id=>id!==cb.dataset.cid);
+      };
+    });
+  }
+  draw();
+  bg.querySelector('#attachSearch').oninput = draw;
+  bg.querySelector('#attachNew').onclick = ()=> openContactModal(null, (nc)=>{ working.push(nc.id); draw(); });
   bg.querySelector('#attachCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#attachSave').onclick = ()=>{ onDone(working); closeModal(bg); };
 }
@@ -1771,7 +1935,7 @@ function gcalLink(item, project){
   params.set('details', details);
 
   const primaryContact = findPrimaryContactCascading(item, project);
-  let location = primaryContact ? getContactAddress(primaryContact) : '';
+  let location = (item.location||'').trim() || (primaryContact ? getContactAddress(primaryContact) : '');
   if(!location && co && co.address) location = co.address;
   if(location) params.set('location', location);
 
@@ -2101,6 +2265,7 @@ checkNotifications();
 if(!restoredView) setTimeout(maybeShowOverduePopup, 400);
 setInterval(checkNotifications, 60000);
 setInterval(updateBanner, 60000);
+setInterval(updateBackupBanner, 60000);
 </script>
 </body>
 </html>
