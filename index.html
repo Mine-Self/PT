@@ -168,7 +168,7 @@
   .bsearch input{ flex:1; min-width:0; border:none; background:transparent; font-size:16px; padding:8px 4px; color:var(--text); outline:none; box-shadow:none; }
   .bsearch button{ border:none; background:rgba(120,120,128,.2); color:var(--muted); width:26px; height:26px; border-radius:50%; font-size:13px; cursor:pointer; flex:none; }
   .bsearch input::-webkit-search-cancel-button,.bsearch input::-webkit-search-decoration{ -webkit-appearance:none; appearance:none; display:none; }
-  .round{ width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; background:var(--ios); border:none; box-shadow:0 8px 24px rgba(0,122,255,.38); cursor:pointer; flex:none; }
+  .round{ width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:var(--on-primary); background:var(--primary); border:none; box-shadow:0 8px 24px rgba(0,0,0,.28); cursor:pointer; flex:none; }
   .round:active{ transform:scale(.96); }
   .menu-bubble{ right:14px; bottom:calc(88px + env(safe-area-inset-bottom,0px)); border-radius:20px; background:var(--glass); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:.5px solid var(--glass-line); box-shadow:0 8px 28px rgba(0,0,0,.2); z-index:45; }
   .menu-bubble .nav-link{ font-weight:600; font-size:15px; }
@@ -210,7 +210,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-04_2108';
+const APP_VERSION = '2026-10-05_0050';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
