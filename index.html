@@ -144,7 +144,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-04_1412';
+const APP_VERSION = '2026-10-04_1530';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -1546,6 +1546,24 @@ function renderOverdueScreen(){
 }
 
 /* ================= Dashboard ================= */
+/* Effective date for the dashboard: the earliest of the due date and all counted reminders.
+   A reminder is counted unless it was acknowledged ("אשר") from the task screen. */
+function itemEffectiveDue(it){
+  let best = null;
+  const consider = s=>{
+    if(!s) return;
+    const d = new Date(s);
+    if(isNaN(d.getTime())) return;
+    if(!best || d < best) best = d;
+  };
+  consider(it.due);
+  for(const r of (it.reminders||[])){
+    if(r.acked) continue;
+    consider(r.datetime);
+  }
+  return best;
+}
+
 function renderDashboard(){
   const now = new Date();
   let totalOpen=0, totalOverdue=0, totalDueSoon=0;
@@ -1561,10 +1579,10 @@ function renderDashboard(){
         const effDone = doneAncestor || it.status==='done';
         if(!effDone){
           totalOpen++;
-          if(it.due){
-            const d = new Date(it.due);
-            if(d<now){ totalOverdue++; urgent.push({item:it, project:p}); }
-            else if(d-now < 1000*60*60*24*3){ totalDueSoon++; urgent.push({item:it, project:p}); }
+          const eff = itemEffectiveDue(it);
+          if(eff){
+            if(eff<now){ totalOverdue++; urgent.push({item:it, project:p, when:eff}); }
+            else if(eff-now < 1000*60*60*24*3){ totalDueSoon++; urgent.push({item:it, project:p, when:eff}); }
           }
           // top clients: use item's primary contact, else attached contacts
           const cids = it.primaryContactId ? [it.primaryContactId] : (it.contactIds||[]);
@@ -1578,7 +1596,7 @@ function renderDashboard(){
       }
     })(p.tasks, false);
   }
-  urgent.sort((a,b)=> new Date(a.item.due) - new Date(b.item.due));
+  urgent.sort((a,b)=> a.when - b.when);
   const topUrgent = urgent.slice(0,8);
 
   // 7 days ahead
@@ -1592,8 +1610,9 @@ function renderDashboard(){
     (function walk(items, doneAncestor){
       for(const it of items){
         const effDone = doneAncestor || it.status==='done';
-        if(!effDone && it.due){
-          const d = new Date(it.due);
+        const effD = effDone ? null : itemEffectiveDue(it);
+        if(effD){
+          const d = effD;
           for(const bucket of itemsByDay){
             if(d.getFullYear()===bucket.date.getFullYear() && d.getMonth()===bucket.date.getMonth() && d.getDate()===bucket.date.getDate()){
               bucket.items.push({item:it, project:p});
@@ -1629,13 +1648,13 @@ function renderDashboard(){
     <div class="card">
       <h3>🔥 הכי דחופות</h3>
       ${topUrgent.length===0?'<div class="muted">אין משימות דחופות כרגע 🎉</div>':''}
-      ${topUrgent.map(({item,project})=>`
+      ${topUrgent.map(({item,project,when})=>`
         <div class="row" data-goto-proj="${project.id}" data-goto-item="${item.id}" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); cursor:pointer;">
           <div>
             <div style="font-weight:600; font-size:13px;">${esc(item.title)}</div>
             <div class="muted">${esc(project.name)}</div>
           </div>
-          <div class="muted" style="color:${new Date(item.due)<now?'var(--red)':'var(--yellow)'}">${fmtDate(item.due)}</div>
+          <div class="muted" style="color:${when<now?'var(--red)':'var(--yellow)'}">${fmtDate(toLocalInputValue(when))}</div>
         </div>
       `).join('')}
     </div>
@@ -2273,7 +2292,7 @@ function openItemModal({item, parentList, depth, project}){
         `:''}
       </div>
     `).join('') || '<div class="muted">אין תזכורות נוספות</div>';
-    bg.querySelectorAll('[data-rem-dt]').forEach(inp=> inp.onchange = ()=>{ workingReminders[+inp.dataset.remDt].datetime = inp.value; });
+    bg.querySelectorAll('[data-rem-dt]').forEach(inp=> inp.onchange = ()=>{ const r = workingReminders[+inp.dataset.remDt]; if(r.datetime !== inp.value){ r.datetime = inp.value; r.notified = false; r.acked = false; } });
     bg.querySelectorAll('[data-rem-rm]').forEach(b=> b.onclick = ()=>{ workingReminders.splice(+b.dataset.remRm,1); renderReminders(); });
     bg.querySelectorAll('[data-rem-recurring]').forEach(cb=> cb.onchange = ()=>{
       const r = workingReminders[+cb.dataset.remRecurring];
@@ -2327,7 +2346,7 @@ function openItemModal({item, parentList, depth, project}){
     const primary = bg.querySelector('#mPrimary').value;
     const addGcal = bg.querySelector('#mAddGcal').checked;
     const cleanReminders = workingReminders.filter(r=>r.datetime).map(r=>({
-      id: r.id||uid(), datetime: r.datetime, notified: !!r.notified,
+      id: r.id||uid(), datetime: r.datetime, notified: !!r.notified, acked: !!r.acked,
       recurring: !!r.recurring, recType: r.recurring?(r.recType||'daily'):'none',
       customDays: r.customDays||[]
     }));
@@ -2378,7 +2397,7 @@ function openFocusModal(itemId, project, opts){
     ${item.desc?`<div class="muted" style="white-space:pre-wrap;">${esc(item.desc)}</div>`:''}
     ${item.location?`<div class="muted" style="margin-top:6px;">📍 ${esc(item.location)}</div>`:''}
     ${item.due?`<div class="muted" style="margin-top:6px;">⏰ ${fmtDate(item.due)}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}</div>`:''}
-    ${(item.reminders||[]).length?`<div class="muted" style="margin-top:4px;">🔔 ${item.reminders.length} תזכורות נוספות</div>`:''}
+    ${(item.reminders||[]).length?'<div id="fcRems" style="margin-top:4px;"></div>':''}
     ${item.contactIds && item.contactIds.length?`<div style="margin-top:8px;">${renderContactChips(item.contactIds)}</div>`:''}
     ${primary?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${esc(primary.name)}</div>`:''}
 
@@ -2430,6 +2449,23 @@ function openFocusModal(itemId, project, opts){
       } else confirmed(snoozeItem(project.id, item.id, parseInt(v,10)));
     });
   }
+  function drawReminders(){
+    const box = bg.querySelector('#fcRems');
+    if(!box) return;
+    const list = (item.reminders||[]).filter(r=>r.datetime).slice().sort((a,b)=> new Date(a.datetime)-new Date(b.datetime));
+    box.innerHTML = list.map(r=>{
+      const pending = r.notified && !r.recurring && !r.acked;
+      return `<div class="row" style="justify-content:space-between; gap:6px; margin-top:3px;">
+        <span class="muted">🔔 ${fmtDate(r.datetime)}${r.recurring?' · 🔁':''}${r.acked?' · ✓ אושרה':''}</span>
+        ${pending?`<button class="btn small secondary" data-rem-ack="${r.id}">✓ אשר</button>`:''}
+      </div>`;
+    }).join('');
+    box.querySelectorAll('[data-rem-ack]').forEach(b=> b.onclick = ()=>{
+      const r = (item.reminders||[]).find(x=>x.id===b.dataset.remAck);
+      if(r){ r.acked = true; save(); drawReminders(); render(); }
+    });
+  }
+  drawReminders();
   let showAllUpd = false;
   function drawUpdates(){
     const all = updatesSorted(item);
