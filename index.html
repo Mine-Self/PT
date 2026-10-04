@@ -54,6 +54,9 @@
   .menu-fab.open{transform:rotate(90deg);}
   .nav-backdrop{position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:39; opacity:0; pointer-events:none; transition:opacity 200ms ease;}
   .nav-backdrop.show{opacity:1; pointer-events:auto;}
+  .sort-menu{position:fixed; z-index:60; min-width:170px; background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:6px; box-shadow:0 8px 28px rgba(0,0,0,.4);}
+  .sort-menu .opt{display:flex; justify-content:space-between; gap:14px; padding:11px 12px; border-radius:10px; font-size:14px; font-weight:600; color:var(--text); cursor:pointer;}
+  .sort-menu .opt.on{background:var(--primary-container); color:var(--primary);}
   .menu-bubble{position:fixed; right:16px; bottom:calc(84px + env(safe-area-inset-bottom,0px)); min-width:210px; background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:8px; z-index:41; box-shadow:0 8px 28px rgba(0,0,0,.4); opacity:0; transform:scale(.85) translateY(10px); transform-origin:bottom right; pointer-events:none; transition:opacity 150ms ease, transform 150ms ease;}
   .menu-bubble.show{opacity:1; transform:none; pointer-events:auto;}
   .menu-bubble .nav-link{display:block; padding:12px 14px; border-radius:12px; font-size:15px; font-weight:700; color:var(--text); cursor:pointer;}
@@ -144,7 +147,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-04_1530';
+const APP_VERSION = '2026-10-04_1657';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -262,7 +265,7 @@ function docsListInner(){
     }).join('') || '<div class="empty-state">לא נמצאו תוצאות.</div>';
   }
   return `<div class="row" style="margin-bottom:10px; gap:8px;">
-      <button class="btn small secondary" data-sort-cycle title="החלף מיון">⇅ ${getSort()==='due'?'תאריך תוקף':SORT_LABELS[getSort()]}</button>
+      <button class="btn small secondary" data-sort-menu="docs" title="מיון">⇅ ${getSort()==='due'?'תאריך תוקף':SORT_LABELS[getSort()]} ▾</button>
       <button class="btn small secondary" id="docCatsBtn">🗂️ קטגוריות</button>
     </div>${tagBar}${body}`;
 }
@@ -817,8 +820,32 @@ function filesSummary(){
 /* ---------- Sort / hide-closed / updates / backup helpers ---------- */
 function getSort(){ return localStorage.getItem('pm_sort') || 'created'; }
 const SORT_LABELS = {created:'סדר יצירה', due:'תאריך יעד', name:'שם (א-ב)'};
-function cycleSort(){ const o=['created','due','name']; localStorage.setItem('pm_sort', o[(o.indexOf(getSort())+1)%3]); }
-function sortBtnHtml(){ return `<button class="btn small secondary" data-sort-cycle title="החלף מיון">⇅ ${SORT_LABELS[getSort()]}</button>`; }
+/* Small dropdown under a button; options = [{key,label}] */
+function openSortMenu(btn, options, current, onPick){
+  document.querySelectorAll('.sort-menu, .sort-menu-bg').forEach(n=>n.remove());
+  const bgEl = document.createElement('div');
+  bgEl.className = 'sort-menu-bg';
+  bgEl.style.cssText = 'position:fixed; inset:0; z-index:59;';
+  const menu = document.createElement('div');
+  menu.className = 'sort-menu';
+  menu.innerHTML = options.map(o=>`<div class="opt ${o.key===current?'on':''}" data-k="${o.key}"><span>${esc(o.label)}</span><span>${o.key===current?'✓':''}</span></div>`).join('');
+  const close = ()=>{ menu.remove(); bgEl.remove(); };
+  bgEl.onclick = close;
+  menu.onclick = (e)=>{ const o = e.target.closest('[data-k]'); if(!o) return; close(); onPick(o.dataset.k); };
+  document.body.appendChild(bgEl); document.body.appendChild(menu);
+  const r = btn.getBoundingClientRect();
+  const w = menu.offsetWidth;
+  let left = r.right - w; // align to the button's right edge (RTL)
+  left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+  menu.style.left = left+'px';
+  const h = menu.offsetHeight;
+  const below = r.bottom + 4;
+  menu.style.top = (below + h > window.innerHeight - 8 ? Math.max(8, r.top - h - 4) : below) + 'px';
+}
+function sortOptions(ctx){
+  return Object.entries(SORT_LABELS).map(([k,l])=>({key:k, label:(ctx==='docs' && k==='due')?'תאריך תוקף':l}));
+}
+function sortBtnHtml(){ return `<button class="btn small secondary" data-sort-menu title="מיון">⇅ ${SORT_LABELS[getSort()]} ▾</button>`; }
 function projectNextDue(p){ let m=''; (function w(a){ a.forEach(t=>{ if(t.status!=='done' && t.due && (!m || t.due<m)) m=t.due; w(t.children||[]); }); })(p.tasks||[]); return m; }
 function sortProjects(list){
   const s=getSort(); if(s==='created') return list;
@@ -1058,7 +1085,12 @@ menuFab.addEventListener('click', ()=>{ if(menuOpen) closeMenu(); else openMenu(
 navBackdrop.addEventListener('click', closeMenu);
 
 document.addEventListener('click', (e)=>{
-  if(e.target.closest('[data-sort-cycle]')){ cycleSort(); render(); return; }
+  const sb = e.target.closest('[data-sort-menu]');
+  if(sb){
+    if(sb.id==='ctSortBtn') return; // contacts has its own handler
+    openSortMenu(sb, sortOptions(sb.dataset.sortMenu), getSort(), k=>{ localStorage.setItem('pm_sort', k); render(); });
+    return;
+  }
   const chip = e.target.closest('[data-contact-chip]');
   if(chip){ openContactDetailModal(chip.dataset.contactChip); }
 });
@@ -1730,7 +1762,20 @@ function renderContactsRoot(){
   else renderCompaniesList();
 }
 
-function getContactsView(){ return localStorage.getItem('pm_contacts_view')==='company' ? 'company' : 'name'; }
+const CT_SORT_LABELS = {name:'שם (א-ב)', company:'לפי חברה', recent:'אחרונים שנוספו'};
+function getContactsSort(){
+  const v = localStorage.getItem('pm_contacts_sort');
+  if(CT_SORT_LABELS[v]) return v;
+  return localStorage.getItem('pm_contacts_view')==='company' ? 'company' : 'name'; // migrate old toggle
+}
+let contactsSearch = '';
+function contactMatches(c, q){
+  const co = DATA.companies.find(x=>x.id===c.companyId);
+  const hay = [c.name, c.role, c.phone, c.email, c.address, c.notes, co&&co.name].filter(Boolean).join(' ').toLowerCase();
+  if(hay.includes(q)) return true;
+  const qd = q.replace(/\D/g,'');
+  return qd.length>=3 && String(c.phone||'').replace(/\D/g,'').includes(qd);
+}
 function getOpenContactGroups(){ try{ return new Set(JSON.parse(localStorage.getItem('pm_contact_open')||'[]')); }catch(e){ return new Set(); } }
 function setOpenContactGroups(set){ try{ localStorage.setItem('pm_contact_open', JSON.stringify([...set])); }catch(e){} }
 function contactCardHtml(c, groupCoId){
@@ -1753,9 +1798,9 @@ function contactCardHtml(c, groupCoId){
     ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
   </div>`;
 }
-function contactsByCompanyHtml(){
+function contactsByCompanyHtml(contacts, forceOpen){
   const open = getOpenContactGroups();
-  const sorted = DATA.contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he'));
+  const sorted = contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he'));
   const groups = [];
   for(const co of DATA.companies){
     const ids = companyAndDescendantIds(co.id);
@@ -1766,7 +1811,7 @@ function contactsByCompanyHtml(){
   const orphans = sorted.filter(c=>!DATA.companies.some(x=>x.id===c.companyId));
   if(orphans.length) groups.push({key:'__none', title:'ללא חברה', logo:'', cs:orphans, coId:null});
   return groups.map(g=>{
-    const isOpen = open.has(g.key);
+    const isOpen = forceOpen || open.has(g.key);
     return `<div class="card" style="padding:0;">
       <div class="item-head" data-contact-group="${esc(g.key)}" style="padding:12px 14px; cursor:pointer;">
         <h3>${isOpen?'▾':'◂'} ${g.logo} ${esc(g.title)}</h3>
@@ -1779,48 +1824,63 @@ function contactsByCompanyHtml(){
 
 function renderContactsList(){
   const wrap = document.getElementById('subContent');
-  const view = getContactsView();
   wrap.innerHTML = `
     <div class="row" style="margin-bottom:8px; gap:8px;">
-      <button class="tab ${view==='name'?'active':''}" data-cview="name">לפי שם</button>
-      <button class="tab ${view==='company'?'active':''}" data-cview="company">לפי חברה</button>
-    </div>
-    <div class="row" style="margin-bottom:8px;">
+      <button class="btn small secondary" id="ctSortBtn" data-sort-menu="contacts" title="מיון">⇅ ${CT_SORT_LABELS[getContactsSort()]} ▾</button>
       <button class="btn small secondary" id="expPeople">ייצוא CSV</button>
       <button class="btn small secondary" id="impPeople">ייבוא CSV</button>
       <input type="file" id="impPeopleFile" accept=".csv,text/csv" style="display:none;">
     </div>
+    <input id="ctSearch" type="search" placeholder="🔍 חיפוש באנשי קשר..." value="${esc(contactsSearch)}" style="margin-bottom:10px;">
     <div id="peopleList"></div>
   `;
-  wrap.querySelectorAll('[data-cview]').forEach(el=> el.addEventListener('click', ()=>{ localStorage.setItem('pm_contacts_view', el.dataset.cview); renderContactsList(); saveView(); }));
-  const list = document.getElementById('peopleList');
-  if(DATA.contacts.length===0){
-    list.innerHTML = `<div class="empty-state">אין אנשי קשר עדיין.<br>לחץ על + כדי להוסיף.</div>`;
-  } else {
-    if(view==='company') list.innerHTML = contactsByCompanyHtml();
-    else list.innerHTML = DATA.contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he')).map(c=>contactCardHtml(c)).join('');
-    list.querySelectorAll('[data-contact-group]').forEach(el=> el.addEventListener('click', ()=>{
-      const set = getOpenContactGroups(); const k = el.dataset.contactGroup;
-      if(set.has(k)) set.delete(k); else set.add(k);
-      setOpenContactGroups(set); renderContactsList();
-    }));
-    list.querySelectorAll('[data-editc]').forEach(el=>{
-      el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
+  document.getElementById('ctSortBtn').onclick = (e)=>{
+    openSortMenu(e.currentTarget, Object.entries(CT_SORT_LABELS).map(([k,l])=>({key:k,label:l})), getContactsSort(), k=>{
+      localStorage.setItem('pm_contacts_sort', k); renderContactsList(); saveView();
     });
-    list.querySelectorAll('[data-delc]').forEach(el=>{
-      el.addEventListener('click', ()=>{
-        if(confirm('למחוק איש קשר זה?')){
-          const id = el.dataset.delc;
-          DATA.contacts = DATA.contacts.filter(c=>c.id!==id);
-          DATA.contacts.forEach(c=>{ if(c.managerId===id) c.managerId=''; });
-          save(); render();
-        }
-      });
-    });
-  }
+  };
+  document.getElementById('ctSearch').oninput = (e)=>{ contactsSearch = e.target.value; drawPeopleList(); };
+  drawPeopleList();
   document.getElementById('expPeople').onclick = exportContactsCsv;
   document.getElementById('impPeople').onclick = ()=> document.getElementById('impPeopleFile').click();
   document.getElementById('impPeopleFile').onchange = (e)=> handleImportFile(e, importContactsCsv);
+}
+
+function drawPeopleList(){
+  const list = document.getElementById('peopleList');
+  if(!list) return;
+  const sort = getContactsSort();
+  const q = contactsSearch.trim().toLowerCase();
+  if(DATA.contacts.length===0){
+    list.innerHTML = `<div class="empty-state">אין אנשי קשר עדיין.<br>לחץ על + כדי להוסיף.</div>`;
+    return;
+  }
+  const contacts = q ? DATA.contacts.filter(c=>contactMatches(c,q)) : DATA.contacts;
+  if(contacts.length===0){
+    list.innerHTML = `<div class="empty-state">לא נמצאו אנשי קשר.</div>`;
+    return;
+  }
+  if(sort==='company') list.innerHTML = contactsByCompanyHtml(contacts, !!q);
+  else if(sort==='recent') list.innerHTML = contacts.slice().reverse().map(c=>contactCardHtml(c)).join('');
+  else list.innerHTML = contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he')).map(c=>contactCardHtml(c)).join('');
+  list.querySelectorAll('[data-contact-group]').forEach(el=> el.addEventListener('click', ()=>{
+    const set = getOpenContactGroups(); const k = el.dataset.contactGroup;
+    if(set.has(k)) set.delete(k); else set.add(k);
+    setOpenContactGroups(set); drawPeopleList();
+  }));
+  list.querySelectorAll('[data-editc]').forEach(el=>{
+    el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
+  });
+  list.querySelectorAll('[data-delc]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      if(confirm('למחוק איש קשר זה?')){
+        const id = el.dataset.delc;
+        DATA.contacts = DATA.contacts.filter(c=>c.id!==id);
+        DATA.contacts.forEach(c=>{ if(c.managerId===id) c.managerId=''; });
+        save(); render();
+      }
+    });
+  });
 }
 
 function renderCompaniesList(){
