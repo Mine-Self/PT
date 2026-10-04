@@ -143,13 +143,317 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-02_0000';
+const APP_VERSION = '2026-10-04_0918';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
 if(!DATA.quickLinks) DATA.quickLinks = [];
-function save(){ localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
+if(!DATA.files) DATA.files = [];
+function save(){ purgeFiles(); localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+/* ================= Attached files (IndexedDB) ================= */
+const FILE_INFO = {};   // id -> meta of every blob that exists on this device
+const MAX_FILE_BYTES = 50*1024*1024;
+let _idb = null;
+function idb(){
+  return _idb || (_idb = new Promise((res,rej)=>{
+    const r = indexedDB.open('pm_files',1);
+    r.onupgradeneeded = ()=> r.result.createObjectStore('files',{keyPath:'id'});
+    r.onsuccess = ()=> res(r.result);
+    r.onerror = ()=> rej(r.error);
+  }));
+}
+function idbTx(mode, fn){
+  return idb().then(db=> new Promise((res,rej)=>{
+    const t = db.transaction('files',mode);
+    const rq = fn(t.objectStore('files'));
+    t.oncomplete = ()=> res(rq && rq.result);
+    t.onerror = ()=> rej(t.error);
+    t.onabort = ()=> rej(t.error);
+  }));
+}
+const idbPut = rec => idbTx('readwrite', st=>st.put(rec));
+const idbGet = id => idbTx('readonly', st=>st.get(id));
+const idbDel = id => idbTx('readwrite', st=>st.delete(id)).catch(()=>{});
+const idbAll = () => idbTx('readonly', st=>st.getAll());
+function loadFileInfo(){
+  idbAll().then(rs=>{
+    (rs||[]).forEach(r=>{ FILE_INFO[r.id] = r.meta; });
+    if((rs||[]).length || DATA.files.length) render();
+  }).catch(()=>{});
+}
+function fmtSize(b){
+  if(b < 1024) return b+' B';
+  if(b < 1048576) return (b/1024).toFixed(0)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
+}
+function fileIcon(f){
+  const t = (f.type||'').toLowerCase();
+  if(t.startsWith('video/')) return '🎬';
+  if(t.startsWith('audio/')) return '🎵';
+  if(t==='application/pdf') return '📕';
+  if(t.startsWith('text/')) return '📄';
+  return '📎';
+}
+function ownerExists(f){
+  const p = findProject(f.projectId); if(!p) return false;
+  if(!f.itemId) return true;
+  const it = findItem(p.tasks, f.itemId); if(!it) return false;
+  if(!f.updateId) return true;
+  return (it.updates||[]).some(u=>u.id===f.updateId);
+}
+function purgeFiles(){
+  if(!DATA.files || !DATA.files.length) return;
+  const gone = DATA.files.filter(f=>!ownerExists(f));
+  if(!gone.length) return;
+  DATA.files = DATA.files.filter(f=>ownerExists(f));
+  gone.forEach(f=>{ idbDel(f.id); delete FILE_INFO[f.id]; });
+}
+function ownerLabel(f){
+  if(!DATA.files.some(x=>x.id===f.id)) return 'לא משויך (ייבא קובץ גיבוי JSON כדי לשייך)';
+  const p = findProject(f.projectId); if(!p) return 'לא משויך';
+  let t = p.name;
+  if(f.itemId){
+    const path = findPathToItem(p.tasks, f.itemId);
+    if(!path) return 'לא משויך';
+    t += ' › ' + path.map(x=>x.title).join(' › ');
+    if(f.updateId) t += ' › עדכון';
+  }
+  return t;
+}
+function filesFor(o){
+  return DATA.files.filter(f=> f.projectId===o.projectId && (f.itemId||'')===(o.itemId||'') && (f.updateId||'')===(o.updateId||''));
+}
+function getFileMeta(id){ return DATA.files.find(x=>x.id===id) || FILE_INFO[id]; }
+function downloadBlob(blob, name){
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(()=> URL.revokeObjectURL(a.href), 4000);
+}
+async function addFiles(list, o, done){
+  const bad = [];
+  for(const f of list){
+    if(f.size > MAX_FILE_BYTES){ bad.push(f.name); continue; }
+    const id = uid();
+    const meta = { id, name: f.name || ('photo_'+Date.now()+'.jpg'), size: f.size, type: f.type||'',
+      added: toLocalInputValue(new Date()), projectId: o.projectId, itemId: o.itemId||'', updateId: o.updateId||'' };
+    try{ await idbPut({id, blob: f, meta}); }catch(e){ alert('שמירת הקובץ נכשלה: '+meta.name); continue; }
+    FILE_INFO[id] = meta; DATA.files.push(meta);
+  }
+  save();
+  try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
+  if(bad.length) alert('קבצים הגדולים מ-50MB לא נוספו:\n'+bad.join('\n'));
+  done();
+}
+function pickFiles(camera, cb){
+  const i = document.createElement('input');
+  i.type = 'file';
+  if(camera){ i.accept = 'image/*'; i.setAttribute('capture','environment'); } else i.multiple = true;
+  i.onchange = ()=>{ if(i.files && i.files.length) cb([...i.files]); };
+  i.click();
+}
+const THUMB_URL = {};
+function fileRowHtml(f, showOwner){
+  const has = !!FILE_INFO[f.id];
+  const isImg = has && /^image\//.test(f.type||'');
+  return `<div class="card" style="padding:8px; margin-top:6px;" data-file="${f.id}">
+    <div class="row" style="gap:8px; flex-wrap:nowrap; align-items:center;">
+      ${isImg?`<img data-thumb="${f.id}" style="width:44px; height:44px; object-fit:cover; border-radius:6px; flex:none;">`:`<span style="font-size:24px; flex:none;">${has?fileIcon(f):'⚠️'}</span>`}
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(f.name)}</div>
+        <div class="muted" style="font-size:11px;">${fmtSize(f.size)}${has?'':' · הקובץ חסר במכשיר זה (ייבא קובץ ZIP של קבצים)'}${showOwner?'<br>'+esc(ownerLabel(f)):''}</div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:6px; gap:4px;">
+      ${has?`<button class="btn small secondary" data-fa="open">פתח</button><button class="btn small secondary" data-fa="dl">⬇️</button>`:''}
+      <button class="btn small secondary" data-fa="ren">✏️ שם</button>
+      <button class="btn small danger" data-fa="del">🗑️</button>
+    </div>
+  </div>`;
+}
+function bindFileRows(box, onChange){
+  box.querySelectorAll('img[data-thumb]').forEach(img=>{
+    const id = img.dataset.thumb;
+    if(THUMB_URL[id]){ img.src = THUMB_URL[id]; return; }
+    idbGet(id).then(r=>{ if(r){ THUMB_URL[id] = URL.createObjectURL(r.blob); img.src = THUMB_URL[id]; } }).catch(()=>{});
+  });
+  box.querySelectorAll('[data-file]').forEach(row=>{
+    const id = row.dataset.file;
+    row.querySelectorAll('[data-fa]').forEach(btn=>{
+      btn.onclick = async ()=>{
+        const f = getFileMeta(id); if(!f) return;
+        const act = btn.dataset.fa;
+        if(act==='open') openFileViewer(f);
+        else if(act==='dl'){ const r = await idbGet(id); if(r) downloadBlob(r.blob, f.name); }
+        else if(act==='ren'){
+          const n = prompt('שם חדש לקובץ:', f.name);
+          if(n && n.trim()){
+            const nm = n.trim();
+            const a = DATA.files.find(x=>x.id===id); if(a) a.name = nm;
+            if(FILE_INFO[id]) FILE_INFO[id].name = nm;
+            idbGet(id).then(r=>{ if(r){ r.meta.name = nm; idbPut(r); } });
+            save(); onChange();
+          }
+        } else if(act==='del'){
+          if(confirm('למחוק את הקובץ "'+f.name+'"?')){
+            DATA.files = DATA.files.filter(x=>x.id!==id);
+            delete FILE_INFO[id]; delete THUMB_URL[id]; idbDel(id);
+            save(); onChange();
+          }
+        }
+      };
+    });
+  });
+}
+function mountFiles(el, o){
+  if(!el) return;
+  const draw = ()=>{
+    el.innerHTML = filesFor(o).map(f=>fileRowHtml(f,false)).join('') +
+      `<div class="row" style="margin-top:6px;"><button class="btn small secondary" data-fadd>📎 צרף קובץ</button><button class="btn small secondary" data-fcam>📷 צלם</button></div>`;
+    bindFileRows(el, ()=>{ draw(); render(); });
+    el.querySelector('[data-fadd]').onclick = ()=> pickFiles(false, l=> addFiles(l, o, ()=>{ draw(); render(); }));
+    el.querySelector('[data-fcam]').onclick = ()=> pickFiles(true, l=> addFiles(l, o, ()=>{ draw(); render(); }));
+  };
+  draw();
+}
+async function openFileViewer(f){
+  const r = await idbGet(f.id);
+  if(!r){ alert('הקובץ חסר'); return; }
+  const blob = r.blob;
+  const t = (f.type || blob.type || '').toLowerCase();
+  const ext = (f.name.split('.').pop()||'').toLowerCase();
+  const isText = t.startsWith('text/') || ['txt','csv','json','md','log','xml'].includes(ext);
+  if(t.startsWith('image/') || t.startsWith('video/') || t.startsWith('audio/') || isText){
+    const url = URL.createObjectURL(blob);
+    let inner;
+    if(t.startsWith('image/')) inner = `<div style="overflow:auto; max-height:70vh;"><img id="vwImg" src="${url}" style="max-width:100%; cursor:zoom-in;"></div><div class="muted" style="margin-top:4px;">לחיצה על התמונה מגדילה / מקטינה</div>`;
+    else if(t.startsWith('video/')) inner = `<video controls src="${url}" style="max-width:100%; max-height:70vh;"></video>`;
+    else if(t.startsWith('audio/')) inner = `<audio controls src="${url}" style="width:100%;"></audio>`;
+    else { const txt = (await blob.text()).slice(0,500000); inner = `<pre style="white-space:pre-wrap; max-height:70vh; overflow:auto; font-size:12px;">${esc(txt)}</pre>`; }
+    const bg = openModalEl(`<h2 style="font-size:15px; word-break:break-all;">${esc(f.name)}</h2>${inner}<div class="row" style="margin-top:12px;"><button class="btn secondary" id="vwClose">סגירה</button></div>`);
+    bg.querySelector('#vwClose').onclick = ()=>{ closeModal(bg); setTimeout(()=>URL.revokeObjectURL(url), 400); };
+    const im = bg.querySelector('#vwImg');
+    if(im) im.onclick = ()=>{
+      const big = im.style.maxWidth==='none';
+      im.style.maxWidth = big ? '100%' : 'none';
+      im.style.width = big ? '' : '250%';
+      im.style.cursor = big ? 'zoom-in' : 'zoom-out';
+    };
+    return;
+  }
+  // PDF, Word, Excel, etc.: hand over to an app on the device (share sheet), otherwise download
+  const file = new File([blob], f.name, {type: t || 'application/octet-stream'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file], title: f.name}); }catch(e){}
+    return;
+  }
+  downloadBlob(blob, f.name);
+}
+
+/* ---- ZIP (store only, no compression) ---- */
+const CRC_T = (()=>{ const t = new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c = c&1 ? 0xEDB88320^(c>>>1) : c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(u8){ let c = 0xFFFFFFFF; for(let i=0;i<u8.length;i++) c = CRC_T[(c^u8[i])&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+async function zipBuild(entries){
+  const enc = new TextEncoder(); const parts = []; const cen = []; let off = 0;
+  for(const e of entries){
+    const nameB = enc.encode(e.name);
+    const data = new Uint8Array(await e.blob.arrayBuffer());
+    const crc = crc32(data), size = data.length;
+    const lh = new DataView(new ArrayBuffer(30));
+    lh.setUint32(0,0x04034b50,true); lh.setUint16(4,20,true); lh.setUint16(6,0x0800,true); lh.setUint16(8,0,true);
+    lh.setUint16(10,0,true); lh.setUint16(12,0x21,true); lh.setUint32(14,crc,true); lh.setUint32(18,size,true);
+    lh.setUint32(22,size,true); lh.setUint16(26,nameB.length,true); lh.setUint16(28,0,true);
+    parts.push(lh.buffer, nameB, e.blob);
+    const ch = new DataView(new ArrayBuffer(46));
+    ch.setUint32(0,0x02014b50,true); ch.setUint16(4,20,true); ch.setUint16(6,20,true); ch.setUint16(8,0x0800,true);
+    ch.setUint16(10,0,true); ch.setUint16(12,0,true); ch.setUint16(14,0x21,true); ch.setUint32(16,crc,true);
+    ch.setUint32(20,size,true); ch.setUint32(24,size,true); ch.setUint16(28,nameB.length,true);
+    ch.setUint32(42,off,true);
+    cen.push(ch.buffer, nameB);
+    off += 30 + nameB.length + size;
+  }
+  let cdSize = 0; cen.forEach(x=>{ cdSize += x.byteLength; });
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0,0x06054b50,true); end.setUint16(8,entries.length,true); end.setUint16(10,entries.length,true);
+  end.setUint32(12,cdSize,true); end.setUint32(16,off,true);
+  return new Blob([...parts, ...cen, end.buffer], {type:'application/zip'});
+}
+async function zipRead(file){
+  const tailLen = Math.min(file.size, 65557);
+  const tail = new DataView(await file.slice(file.size-tailLen).arrayBuffer());
+  let p = -1;
+  for(let i=tailLen-22;i>=0;i--){ if(tail.getUint32(i,true)===0x06054b50){ p=i; break; } }
+  if(p<0) throw new Error('bad zip');
+  const n = tail.getUint16(p+10,true), cdSize = tail.getUint32(p+12,true), cdOff = tail.getUint32(p+16,true);
+  const cd = new DataView(await file.slice(cdOff, cdOff+cdSize).arrayBuffer());
+  const dec = new TextDecoder(); const out = []; let q = 0;
+  for(let i=0;i<n;i++){
+    if(cd.getUint32(q,true)!==0x02014b50) throw new Error('bad zip');
+    const method = cd.getUint16(q+10,true), csize = cd.getUint32(q+20,true);
+    const nlen = cd.getUint16(q+28,true), xlen = cd.getUint16(q+30,true), clen = cd.getUint16(q+32,true), lo = cd.getUint32(q+42,true);
+    const name = dec.decode(new Uint8Array(cd.buffer, q+46, nlen));
+    out.push({name, method, async getBlob(){
+      const lhd = new DataView(await file.slice(lo, lo+30).arrayBuffer());
+      const start = lo + 30 + lhd.getUint16(26,true) + lhd.getUint16(28,true);
+      return file.slice(start, start+csize);
+    }});
+    q += 46 + nlen + xlen + clen;
+  }
+  return out;
+}
+async function exportFilesZip(btn){
+  const ids = Object.keys(FILE_INFO);
+  if(!ids.length){ alert('אין קבצים לגיבוי'); return; }
+  const old = btn.textContent; btn.textContent = 'מכין...'; btn.disabled = true;
+  try{
+    const entries = [], manifest = [];
+    for(const id of ids){
+      const r = await idbGet(id); if(!r) continue;
+      manifest.push(getFileMeta(id));
+      entries.push({name:'files/'+id, blob:r.blob});
+    }
+    entries.unshift({name:'manifest.json', blob:new Blob([JSON.stringify(manifest)], {type:'application/json'})});
+    const zip = await zipBuild(entries);
+    const d = new Date();
+    downloadBlob(zip, `pm-files_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}.zip`);
+  }catch(e){ alert('יצירת קובץ הגיבוי נכשלה'); }
+  btn.textContent = old; btn.disabled = false;
+}
+async function importFilesZip(file){
+  try{
+    const entries = await zipRead(file);
+    const mf = entries.find(e=>e.name==='manifest.json');
+    if(!mf) throw new Error('no manifest');
+    const manifest = JSON.parse(await (await mf.getBlob()).text());
+    let added = 0, skipped = 0;
+    for(const e of entries){
+      if(!e.name.startsWith('files/') || e.method!==0) continue;
+      const id = e.name.slice(6);
+      if(FILE_INFO[id]){ skipped++; continue; }
+      const meta = manifest.find(m=>m.id===id); if(!meta) continue;
+      const blob = (await e.getBlob()).slice(0, meta.size, meta.type||'');
+      await idbPut({id, blob, meta});
+      FILE_INFO[id] = meta; added++;
+    }
+    alert(`יובאו ${added} קבצים` + (skipped?` (${skipped} כבר היו קיימים)`:''));
+    render();
+  }catch(err){ alert('קובץ ZIP לא תקין'); }
+}
+function allFilesList(){
+  const m = new Map();
+  DATA.files.forEach(f=>m.set(f.id,f));
+  Object.keys(FILE_INFO).forEach(id=>{ if(!m.has(id)) m.set(id, FILE_INFO[id]); });
+  return [...m.values()];
+}
+function filesSummary(){
+  const ids = Object.keys(FILE_INFO);
+  let total = 0; ids.forEach(id=>{ total += (FILE_INFO[id].size||0); });
+  const missing = DATA.files.filter(f=>!FILE_INFO[f.id]).length;
+  return `${ids.length} קבצים · ${fmtSize(total)} בשימוש${missing?` · ${missing} חסרים במכשיר זה`:''}`;
+}
 
 /* ---------- Sort / hide-closed / updates / backup helpers ---------- */
 function getSort(){ return localStorage.getItem('pm_sort') || 'created'; }
@@ -682,6 +986,8 @@ function renderProjectDetail(pid){
       <div style="margin-top:6px;">${renderContactChips(p.contactIds)}</div>
       ${p.primaryContactId?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${renderContactChips([p.primaryContactId])}</div>`:''}
       <button class="btn small secondary" id="addProjContactBtn" style="margin-top:6px;">+ איש קשר לפרויקט</button>
+      <div class="muted" style="margin-top:10px; font-weight:700;">קבצים מצורפים</div>
+      <div id="projFiles"></div>
     </div>
     ${p.tasks.length>0?`<div class="row" style="margin-bottom:4px;">
       <button class="btn small secondary" id="expandAllBtn">הרחב הכל</button>
@@ -695,6 +1001,7 @@ function renderProjectDetail(pid){
     ${p.tasks.length===0?'<div class="empty-state">אין משימות. לחץ על + להוספת משימה.</div>':''}
   `;
   document.getElementById('backBtn').onclick = ()=>{ currentProjectId=null; render(); };
+  mountFiles(document.getElementById('projFiles'), {projectId:p.id});
   document.getElementById('editProjBtn').onclick = ()=> openProjectModal(p);
   const completeBtn = document.getElementById('completeProjBtn');
   if(completeBtn) completeBtn.onclick = ()=>{
@@ -740,7 +1047,7 @@ function renderItemHtml(item, depth, project){
           <span class="item-title ${item.status==='done'?'done':''} ${statusClass}" data-open-focus="${item.id}">
             ${esc(item.title)}<span class="status-pill">${statusText}</span>
           </span>
-          <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}</div>
+          <div class="item-meta">${label}${item.due?` · ⏰ ${fmtDate(item.due)}`:''}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}${remCount?` · 🔔 ${remCount} תזכורות נוספות`:''}${DATA.files.some(f=>f.itemId===item.id)?` · 📎 ${DATA.files.filter(f=>f.itemId===item.id).length}`:''}</div>
           ${latestUpdate(item)?`<div class="muted" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:68vw;">📝 ${esc(latestUpdate(item).text)}</div>`:''}
           <div>${renderContactChips(item.contactIds)}${item.primaryContactId?` <span class="muted">⭐ ראשי</span>`:''}</div>
         </div>
@@ -1226,6 +1533,17 @@ function renderSettings(){
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
     `},
+    { id:'files', title:'📎 קבצים', body: `
+      <div class="muted">${filesSummary()}</div>
+      <div class="row" style="margin-top:8px;">
+        <button class="btn" id="zipExportBtn">גיבוי קבצים (ZIP)</button>
+        <button class="btn secondary" id="zipImportBtn">ייבוא קבצים (ZIP)</button>
+      </div>
+      <input type="file" id="zipImportFile" accept=".zip,application/zip" style="display:none;">
+      <input id="filesSearch" placeholder="🔍 חיפוש קובץ..." style="margin-top:10px;">
+      <div id="allFilesList"></div>
+      <div class="footer-note" style="margin-top:8px;">הקבצים נשמרים רק במכשיר הזה ואינם נכללים בגיבוי ה-JSON (נכללים בו רק פרטי הקבצים והשיוך שלהם). לגיבוי הקבצים עצמם השתמש ב-ZIP.</div>
+    `},
     { id:'backup', title:'💾 גיבוי ומידע', body: `
       <div class="muted">גיבוי אחרון: <b>${localStorage.getItem('pm_last_backup') ? fmtDate(localStorage.getItem('pm_last_backup')) : 'טרם בוצע'}</b></div>
       <label>תזכורת לגיבוי</label>
@@ -1293,6 +1611,21 @@ function renderSettings(){
     };
   }
 
+  if(settingsOpenSection==='files'){
+    const drawAll = ()=>{
+      const q = document.getElementById('filesSearch').value.trim().toLowerCase();
+      const box = document.getElementById('allFilesList');
+      const list = allFilesList().filter(f=> !q || (f.name+' '+ownerLabel(f)).toLowerCase().includes(q));
+      box.innerHTML = list.map(f=>fileRowHtml(f,true)).join('') || '<div class="muted" style="margin-top:8px;">אין קבצים</div>';
+      bindFileRows(box, ()=>{ renderSettings(); });
+    };
+    document.getElementById('filesSearch').oninput = drawAll;
+    drawAll();
+    document.getElementById('zipExportBtn').onclick = (e)=> exportFilesZip(e.currentTarget);
+    document.getElementById('zipImportBtn').onclick = ()=> document.getElementById('zipImportFile').click();
+    document.getElementById('zipImportFile').onchange = (e)=>{ const f = e.target.files[0]; if(f) importFilesZip(f); };
+  }
+
   if(settingsOpenSection==='backup'){
     document.getElementById('backupFreqSel').onchange = (e)=>{ localStorage.setItem('pm_backup_freq', e.target.value); localStorage.removeItem('pm_backup_snooze'); updateBackupBanner(); };
     document.getElementById('exportBtn').onclick = ()=>{ doBackupExport(); renderSettings(); };
@@ -1307,6 +1640,7 @@ function renderSettings(){
           if(!parsed.projects || !parsed.contacts) throw new Error('bad format');
           if(!parsed.companies) parsed.companies = [];
           if(!parsed.quickLinks) parsed.quickLinks = [];
+          if(!parsed.files) parsed.files = [];
           if(confirm('הייבוא יחליף את כל המידע הקיים. להמשיך?')){
             DATA = parsed; save(); render();
           }
@@ -1316,7 +1650,11 @@ function renderSettings(){
     };
     document.getElementById('resetBtn').onclick = ()=>{
       if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות, אנשי הקשר והחברות. בטוח?')){
-        DATA = {projects:[], contacts:[], companies:[], quickLinks:[]}; save(); render();
+        const hadFiles = DATA.files.length || Object.keys(FILE_INFO).length;
+        const wipe = hadFiles ? confirm('למחוק גם את כל הקבצים המצורפים?') : false;
+        DATA = {projects:[], contacts:[], companies:[], quickLinks:[], files:[]};
+        if(wipe){ idb().then(db=>{ db.transaction('files','readwrite').objectStore('files').clear(); }); for(const k in FILE_INFO) delete FILE_INFO[k]; }
+        save(); render();
       }
     };
   }
@@ -1610,6 +1948,8 @@ function openFocusModal(itemId, project){
     ${item.contactIds && item.contactIds.length?`<div style="margin-top:8px;">${renderContactChips(item.contactIds)}</div>`:''}
     ${primary?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${esc(primary.name)}</div>`:''}
 
+    <label style="margin-top:14px;">קבצים</label>
+    <div id="fcFiles"></div>
     <label style="margin-top:14px;">עדכונים</label>
     <div id="fcUpdates"></div>
     <button class="btn small secondary" id="fcAddUpd" style="margin-top:6px;">+ הוסף עדכון</button>
@@ -1637,17 +1977,20 @@ function openFocusModal(itemId, project){
         <div class="item-head"><span class="muted">${fmtDate(u.at)}</span>
           <span class="row" style="gap:2px;"><button class="icon-btn" data-upd-edit="${u.id}">✏️</button><button class="icon-btn" data-upd-del="${u.id}">🗑️</button></span></div>
         <div style="white-space:pre-wrap; font-size:13px;">${esc(u.text)}</div>
+        <div data-upd-files="${u.id}" style="margin-top:6px;"></div>
       </div>`).join('') || '<div class="muted">אין עדכונים</div>';
     if(all.length>3){
       bg.querySelector('#fcUpdates').insertAdjacentHTML('beforeend', `<button class="btn small secondary" id="updMore" style="margin-top:6px;">${showAllUpd?'הצג פחות':`הצג הכול (${all.length})`}</button>`);
       bg.querySelector('#updMore').onclick = ()=>{ showAllUpd=!showAllUpd; drawUpdates(); };
     }
+    bg.querySelectorAll('[data-upd-files]').forEach(el=> mountFiles(el, {projectId:project.id, itemId:item.id, updateId:el.dataset.updFiles}));
     bg.querySelectorAll('[data-upd-edit]').forEach(b=> b.onclick = ()=> openUpdateModal(item, item.updates.find(x=>x.id===b.dataset.updEdit), ()=>{ drawUpdates(); render(); }));
     bg.querySelectorAll('[data-upd-del]').forEach(b=> b.onclick = ()=>{
       if(confirm('למחוק את העדכון?')){ item.updates = item.updates.filter(x=>x.id!==b.dataset.updDel); save(); drawUpdates(); render(); }
     });
   }
   drawUpdates();
+  mountFiles(bg.querySelector('#fcFiles'), {projectId:project.id, itemId:item.id});
   bg.querySelector('#fcAddUpd').onclick = ()=> openUpdateModal(item, null, ()=>{ drawUpdates(); render(); });
   if(children.length){
     bg.querySelector('#focusChildren').innerHTML = children.map(c=>`
@@ -2261,6 +2604,7 @@ if(!restoredView) render();
 viewReady = true;
 handleDeepLinkFromUrl();
 saveView();
+loadFileInfo();
 checkNotifications();
 if(!restoredView) setTimeout(maybeShowOverduePopup, 400);
 setInterval(checkNotifications, 60000);
