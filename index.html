@@ -2,7 +2,7 @@
 <html lang="he" dir="rtl">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>מנהל פרויקטים - מכשור רפואי</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#0B57D0">
@@ -113,6 +113,68 @@
   .accordion-body{overflow:hidden; max-height:0; transition:max-height 160ms ease;}
   .accordion-body.open{max-height:2000px;}
 </style>
+<style id="theme-shadcn">
+  /* shadcn/ui-style tokens (zinc) */
+  :root{ --bg:#ffffff; --panel:#ffffff; --panel2:#f4f4f5; --border:#e4e4e7; --text:#09090b; --muted:#71717a;
+    --accent:#18181b; --primary:#18181b; --primary-container:#f4f4f5; --green:#16a34a; --yellow:#d97706; --red:#dc2626;
+    --radius:12px; --radius-sm:8px; --shadow:0 1px 2px rgba(0,0,0,.05); --ios:#007aff; --ios-soft:rgba(0,122,255,.12);
+    --glass:rgba(255,255,255,.66); --glass-line:rgba(255,255,255,.75); --on-primary:#fafafa; }
+  :root[data-theme="light"]{ --bg:#ffffff; --panel:#ffffff; --panel2:#f4f4f5; --border:#e4e4e7; --text:#09090b; --muted:#71717a;
+    --accent:#18181b; --primary:#18181b; --primary-container:#f4f4f5; --shadow:0 1px 2px rgba(0,0,0,.05);
+    --glass:rgba(255,255,255,.66); --glass-line:rgba(255,255,255,.75); --on-primary:#fafafa; --ios:#007aff; --ios-soft:rgba(0,122,255,.12); }
+  :root[data-theme="dark"]{ --bg:#09090b; --panel:#0c0c0f; --panel2:#18181b; --border:#27272a; --text:#fafafa; --muted:#a1a1aa;
+    --accent:#fafafa; --primary:#fafafa; --primary-container:#27272a; --green:#22c55e; --yellow:#f59e0b; --red:#ef4444; --shadow:none;
+    --glass:rgba(32,32,36,.66); --glass-line:rgba(255,255,255,.12); --on-primary:#09090b; --ios:#0a84ff; --ios-soft:rgba(10,132,255,.2); }
+  body{ font-family:-apple-system,"SF Pro Text",Inter,ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,sans-serif; letter-spacing:-.005em; }
+  header{ background:var(--bg); }
+  .card{ box-shadow:var(--shadow); padding:16px; }
+  .card h3{ font-weight:600; letter-spacing:-.01em; }
+  .btn{ border-radius:8px; font-weight:500; padding:8px 14px; color:var(--on-primary); }
+  .btn.secondary{ background:var(--bg); color:var(--text); border:1px solid var(--border); box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .btn.danger{ background:var(--bg); color:var(--red); border:1px solid var(--border); }
+  .btn.small{ padding:5px 10px; }
+  .tab{ border-radius:6px; background:transparent; border:none; font-weight:500; padding:6px 12px; color:var(--muted); }
+  .tab.active{ background:var(--bg); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.08); border:none; }
+  .subtab{ border-radius:6px; background:transparent; border:none; font-weight:500; }
+  .subtab.active{ background:var(--bg); color:var(--text); box-shadow:0 1px 2px rgba(0,0,0,.08); }
+  .stat-card{ background:var(--bg); border:1px solid var(--border); border-radius:10px; text-align:start; padding:14px; }
+  .stat-card .num{ font-weight:700; letter-spacing:-.02em; color:var(--text); }
+  .chip{ border-radius:6px; background:var(--panel2); color:var(--text); font-weight:500; }
+  input,select,textarea{ border-radius:8px; background:var(--bg); border:1px solid var(--border); }
+  input[type=checkbox],input[type=radio]{ background:initial; border:initial; }
+  .progress-bar{ height:6px; background:var(--panel2); } .progress-fill{ background:var(--primary); }
+  .banner{ background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:var(--radius); }
+  :root[data-theme="dark"] .banner{ background:#1c1608; border-color:#78350f; color:#fcd34d; }
+  .modal{ border-radius:20px 20px 0 0; background:var(--panel); border:1px solid var(--border); border-bottom:none; }
+  .modal.center{ border-radius:16px; border-bottom:1px solid var(--border); }
+  .status-open .status-pill{ background:#fef3c7; color:#b45309; } .status-done .status-pill{ background:#dcfce7; color:#15803d; } .status-overdue .status-pill{ background:#fee2e2; color:#b91c1c; }
+  :root[data-theme="dark"] .status-open .status-pill{ background:#3a2a08; color:#fbbf24; } :root[data-theme="dark"] .status-done .status-pill{ background:#0f2a1a; color:#4ade80; } :root[data-theme="dark"] .status-overdue .status-pill{ background:#3b1212; color:#f87171; }
+  .sort-menu{ border-radius:14px; box-shadow:0 8px 28px rgba(0,0,0,.18); } .sort-menu .opt{ border-radius:8px; font-weight:500; }
+  .sort-menu .opt.on{ background:var(--ios-soft); color:var(--ios); }
+
+  /* iOS-style floating glass bar */
+  .fab,.menu-fab{ display:none !important; }
+  main{ padding-bottom:calc(112px + env(safe-area-inset-bottom,0px)); }
+  .dock{ position:fixed; left:14px; right:14px; bottom:calc(12px + env(safe-area-inset-bottom,0px)); display:flex; gap:10px; z-index:40; align-items:center; pointer-events:none; }
+  .dock > *{ pointer-events:auto; }
+  .glass{ background:var(--glass); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:.5px solid var(--glass-line); box-shadow:0 8px 28px rgba(0,0,0,.16), inset 0 0 0 .5px rgba(0,0,0,.05); }
+  .cap{ flex:1; height:64px; border-radius:32px; display:flex; padding:5px; gap:2px; align-items:stretch; }
+  .cap.solo{ flex:none; }
+  .bt{ flex:1; min-width:56px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; border-radius:27px; color:var(--muted); font-size:10px; font-weight:600; letter-spacing:.01em; background:none; border:none; font-family:inherit; cursor:pointer; padding:0 6px; -webkit-tap-highlight-color:transparent; }
+  .bt svg{ display:block; }
+  .bt.on{ background:rgba(120,120,128,.16); color:var(--ios); }
+  .bt:active{ background:rgba(120,120,128,.16); }
+  .bsearch{ flex:1; display:flex; align-items:center; gap:6px; padding:0 4px 0 6px; color:var(--muted); min-width:0; }
+  .bsearch input{ flex:1; min-width:0; border:none; background:transparent; font-size:16px; padding:8px 4px; color:var(--text); outline:none; box-shadow:none; }
+  .bsearch button{ border:none; background:rgba(120,120,128,.2); color:var(--muted); width:26px; height:26px; border-radius:50%; font-size:13px; cursor:pointer; flex:none; }
+  .bsearch input::-webkit-search-cancel-button,.bsearch input::-webkit-search-decoration{ -webkit-appearance:none; appearance:none; display:none; }
+  .round{ width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; color:#fff; background:var(--ios); border:none; box-shadow:0 8px 24px rgba(0,122,255,.38); cursor:pointer; flex:none; }
+  .round:active{ transform:scale(.96); }
+  .menu-bubble{ right:14px; bottom:calc(88px + env(safe-area-inset-bottom,0px)); border-radius:20px; background:var(--glass); backdrop-filter:blur(24px) saturate(180%); -webkit-backdrop-filter:blur(24px) saturate(180%); border:.5px solid var(--glass-line); box-shadow:0 8px 28px rgba(0,0,0,.2); z-index:45; }
+  .menu-bubble .nav-link{ font-weight:600; font-size:15px; }
+  .menu-bubble .nav-link.active{ background:var(--ios-soft); color:var(--ios); }
+  .nav-backdrop{ z-index:44; }
+</style>
 </head>
 <body>
 
@@ -133,6 +195,7 @@
 
 <button class="fab" id="fab">+</button>
 <button class="menu-fab" id="menuFab" aria-label="תפריט">☰</button>
+<div class="dock" id="bar"></div>
 
 <script>
 /* ================= Data layer ================= */
@@ -147,7 +210,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-04_1657';
+const APP_VERSION = '2026-10-04_2108';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -264,10 +327,7 @@ function docsListInner(){
       </div>`;
     }).join('') || '<div class="empty-state">לא נמצאו תוצאות.</div>';
   }
-  return `<div class="row" style="margin-bottom:10px; gap:8px;">
-      <button class="btn small secondary" data-sort-menu="docs" title="מיון">⇅ ${getSort()==='due'?'תאריך תוקף':SORT_LABELS[getSort()]} ▾</button>
-      <button class="btn small secondary" id="docCatsBtn">🗂️ קטגוריות</button>
-    </div>${tagBar}${body}`;
+  return `${tagBar}${body}`;
 }
 function bindDocs(){
   main.querySelectorAll('[data-tagf]').forEach(el=>{
@@ -305,10 +365,7 @@ async function copyText(t){
 }
 function renderDocs(){
   main.innerHTML = `
-    <input id="docSearchBox" placeholder="🔍 חיפוש לפי שם, תגית, קטגוריה..." value="${esc(docSearch)}" style="margin-bottom:10px;">
     <div id="docsInner">${docsListInner()}</div>`;
-  const sb = document.getElementById('docSearchBox');
-  sb.addEventListener('input', ()=>{ docSearch = sb.value; renderDocsListOnly(); });
   bindDocs();
 }
 function renderDocsListOnly(){
@@ -828,7 +885,7 @@ function openSortMenu(btn, options, current, onPick){
   bgEl.style.cssText = 'position:fixed; inset:0; z-index:59;';
   const menu = document.createElement('div');
   menu.className = 'sort-menu';
-  menu.innerHTML = options.map(o=>`<div class="opt ${o.key===current?'on':''}" data-k="${o.key}"><span>${esc(o.label)}</span><span>${o.key===current?'✓':''}</span></div>`).join('');
+  menu.innerHTML = options.map(o=>`<div class="opt ${(o.on!==undefined?o.on:o.key===current)?'on':''}" data-k="${o.key}"><span>${esc(o.label)}</span><span>${(o.on!==undefined?o.on:o.key===current)?'✓':''}</span></div>`).join('');
   const close = ()=>{ menu.remove(); bgEl.remove(); };
   bgEl.onclick = close;
   menu.onclick = (e)=>{ const o = e.target.closest('[data-k]'); if(!o) return; close(); onPick(o.dataset.k); };
@@ -1055,13 +1112,14 @@ document.querySelectorAll('.nav-link').forEach(el=>{
   });
 });
 
-document.getElementById('fab').addEventListener('click', ()=>{
+function doAdd(){
   if(currentTab==='projects' && !currentProjectId) openProjectModal();
   else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1, project: findProject(currentProjectId)});
   else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
   else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
   else if(currentTab==='docs') openDocModal();
-});
+}
+document.getElementById('fab').addEventListener('click', doAdd);
 
 /* ---------- Menu bubble: floating button at bottom-right ---------- */
 const menuBubble = document.getElementById('menuBubble');
@@ -1087,7 +1145,6 @@ navBackdrop.addEventListener('click', closeMenu);
 document.addEventListener('click', (e)=>{
   const sb = e.target.closest('[data-sort-menu]');
   if(sb){
-    if(sb.id==='ctSortBtn') return; // contacts has its own handler
     openSortMenu(sb, sortOptions(sb.dataset.sortMenu), getSort(), k=>{ localStorage.setItem('pm_sort', k); render(); });
     return;
   }
@@ -1133,6 +1190,106 @@ window.addEventListener('scroll', ()=>{ clearTimeout(scrollTimer); scrollTimer =
 window.addEventListener('pagehide', saveView);
 document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') saveView(); });
 
+/* ================= Bottom glass bar (iOS style) ================= */
+const BI = {
+  menu:'<path d="M4.5 7h15M4.5 12h15M4.5 17h15"/>',
+  search:'<circle cx="10.8" cy="10.8" r="6.3"/><path d="m15.6 15.6 4.4 4.4"/>',
+  sort:'<path d="M8 19V5M8 5 4.5 8.5M8 5l3.5 3.5M16 5v14M16 19l-3.5-3.5M16 19l3.5-3.5"/>',
+  view:'<rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/>',
+  more:'<circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>'
+};
+function biSvg(k, size){ size = size||25; return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">${BI[k]}</svg>`; }
+let barSearchOpen = false, barKey = '';
+function barScreen(){
+  if(currentTab==='projects') return currentProjectId ? 'project' : 'projects';
+  if(currentTab==='contacts') return contactsSubTab==='companies' ? 'companies' : 'people';
+  if(currentTab==='docs') return 'docs';
+  return 'plain';
+}
+function getBarSearch(k){ return k==='projects'?searchQuery : k==='people'?contactsSearch : k==='companies'?companiesSearch : k==='docs'?docSearch : ''; }
+function setBarSearch(k, v){
+  if(k==='projects'){ searchQuery = v; renderProjectsListOnly(); }
+  else if(k==='people'){ contactsSearch = v; drawPeopleList(); }
+  else if(k==='companies'){ companiesSearch = v; drawCompaniesList(); }
+  else if(k==='docs'){ docSearch = v; renderDocsListOnly(); }
+  saveView();
+}
+function barItems(k){
+  const it = [{id:'menu', label:'תפריט'}];
+  if(['projects','people','companies','docs'].includes(k)) it.push({id:'search', label:'חיפוש'});
+  if(['projects','project','people','docs'].includes(k)) it.push({id:'sort', label:'מיון'});
+  if(['projects','people','companies'].includes(k)) it.push({id:'view', label:'תצוגה'});
+  if(k!=='plain') it.push({id:'more', label:'עוד'});
+  return it;
+}
+function barMoreOptions(k){
+  if(k==='projects') return [{key:'hideClosed', label:'הסתר סגורים', on:getHideClosed()}];
+  if(k==='project') return [{key:'expand', label:'הרחב הכל'},{key:'collapse', label:'כווץ הכל'},{key:'hideDone', label:'הסתר הושלמו', on:hideCompletedInProject}];
+  if(k==='people' || k==='companies') return [{key:'exp', label:'ייצוא CSV'},{key:'imp', label:'ייבוא CSV'}];
+  if(k==='docs') return [{key:'cats', label:'ניהול קטגוריות'}];
+  return [];
+}
+function barMore(k, btn){
+  openSortMenu(btn, barMoreOptions(k), undefined, key=>{
+    const p = currentProjectId ? findProject(currentProjectId) : null;
+    if(key==='hideClosed'){ localStorage.setItem('pm_hide_closed', getHideClosed()?'0':'1'); renderProjectsListOnly(); }
+    else if(key==='expand' && p){ expandAllInProject(p); }
+    else if(key==='collapse' && p){ collapseAllInProject(p); }
+    else if(key==='hideDone'){ hideCompletedInProject = !hideCompletedInProject; render(); }
+    else if(key==='cats'){ openDocCatsModal(); }
+    else if(key==='exp'){ if(k==='people') exportContactsCsv(); else exportCompaniesCsv(); }
+    else if(key==='imp'){ const f = document.getElementById(k==='people'?'impPeopleFile':'impCoFile'); if(f) f.click(); }
+  });
+}
+function barSort(k, btn){
+  if(k==='people'){
+    openSortMenu(btn, Object.entries(CT_SORT_LABELS).map(([key,label])=>({key,label})), getContactsSort(), key=>{
+      localStorage.setItem('pm_contacts_sort', key); drawPeopleList(); saveView();
+    });
+  } else {
+    openSortMenu(btn, sortOptions(k==='docs'?'docs':''), getSort(), key=>{ localStorage.setItem('pm_sort', key); render(); });
+  }
+}
+function barView(k, btn){
+  if(k==='projects'){
+    openSortMenu(btn, [{key:'project',label:'לפי פרויקט'},{key:'client',label:'לפי לקוח'}], getProjectsView(), key=>{ localStorage.setItem('pm_projects_view', key); renderProjectsListOnly(); });
+  } else {
+    openSortMenu(btn, [{key:'people',label:'אנשי קשר'},{key:'companies',label:'לקוחות/חברות'}], contactsSubTab, key=>{ contactsSubTab = key; render(); });
+  }
+}
+function updateBar(){
+  const bar = document.getElementById('bar');
+  if(!bar) return;
+  const k = barScreen();
+  if(k!==barKey){ barKey = k; barSearchOpen = !!getBarSearch(k); }
+  const ae = document.activeElement;
+  if(ae && ae.id==='barSearchInput') return; // user is typing in the bar
+  const items = barItems(k);
+  const canAdd = !['settings','overdue','dashboard'].includes(currentTab);
+  const tabHtml = it=> `<button class="bt ${it.id==='search'&&barSearchOpen?'on':''}" data-bar="${it.id}">${it.id==='menu'?biSvg('menu'):biSvg(it.id)}<span>${it.label}</span></button>`;
+  let cap;
+  if(barSearchOpen && items.some(i=>i.id==='search')){
+    cap = tabHtml(items[0]) + `<div class="bsearch">${biSvg('search',20)}<input id="barSearchInput" type="search" enterkeyhint="search" placeholder="חיפוש..." value="${esc(getBarSearch(k))}"><button id="barSearchClose" aria-label="סגור חיפוש">✕</button></div>`;
+  } else cap = items.map(tabHtml).join('');
+  bar.innerHTML = `<div class="cap glass ${canAdd?'':'solo'}">${cap}</div>${canAdd?`<button class="round" id="barAdd" aria-label="הוספה">${biSvg('plus',28)}</button>`:''}`;
+  bar.querySelectorAll('[data-bar]').forEach(b=> b.onclick = ()=>{
+    const id = b.dataset.bar;
+    if(id==='menu'){ if(menuOpen) closeMenu(); else openMenu(); }
+    else if(id==='search'){ barSearchOpen = true; updateBar(); const i = document.getElementById('barSearchInput'); if(i) i.focus(); }
+    else if(id==='sort') barSort(k, b);
+    else if(id==='view') barView(k, b);
+    else if(id==='more') barMore(k, b);
+  });
+  const inp = document.getElementById('barSearchInput');
+  if(inp){
+    inp.oninput = ()=> setBarSearch(k, inp.value);
+    document.getElementById('barSearchClose').onclick = ()=>{ setBarSearch(k, ''); barSearchOpen = false; updateBar(); };
+  }
+  const add = document.getElementById('barAdd');
+  if(add) add.onclick = doAdd;
+}
+
 function render(){
   updateBanner();
   updatePageTitle();
@@ -1152,6 +1309,7 @@ function render(){
     renderSettings();
   }
   updateBackupBanner();
+  updateBar();
   saveView();
 }
 
@@ -1269,12 +1427,7 @@ function projectsListInner(){
   } else {
     body = filtered.map(p=>projectCardHtml(p)).join('');
   }
-  return `<div class="row" style="margin-bottom:10px; gap:8px;">
-      <button class="tab ${view==='project'?'active':''}" data-pview="project">לפי פרויקט</button>
-      <button class="tab ${view==='client'?'active':''}" data-pview="client">לפי לקוח</button>
-      ${sortBtnHtml()}
-      <label class="row" style="cursor:pointer; margin-right:auto;"><input type="checkbox" data-hide-closed style="width:auto;" ${getHideClosed()?'checked':''}> הסתר סגורים</label>
-    </div>${body}`;
+  return body;
 }
 
 function bindProjectsList(){
@@ -1300,11 +1453,8 @@ function bindProjectsList(){
 
 function renderProjectsList(){
   main.innerHTML = `
-    <input id="searchBox" placeholder="🔍 חיפוש פרויקטים, משימות, אנשי קשר, חברות..." value="${esc(searchQuery)}" style="margin-bottom:10px;">
     <div id="projectsInner">${projectsListInner()}</div>
   `;
-  const sb = document.getElementById('searchBox');
-  sb.addEventListener('input', ()=>{ searchQuery = sb.value; renderProjectsListOnly(); });
   bindProjectsList();
 }
 function renderProjectsListOnly(){
@@ -1385,14 +1535,6 @@ function renderProjectDetail(pid){
       <div class="muted" style="margin-top:10px; font-weight:700;">קבצים מצורפים</div>
       <div id="projFiles"></div>
     </div>
-    ${p.tasks.length>0?`<div class="row" style="margin-bottom:4px;">
-      <button class="btn small secondary" id="expandAllBtn">הרחב הכל</button>
-      <button class="btn small secondary" id="collapseAllBtn">כווץ הכל</button>
-      ${sortBtnHtml()}
-      <label class="row" style="cursor:pointer; margin-right:auto;">
-        <input type="checkbox" id="hideDoneChk" style="width:auto;" ${hideCompletedInProject?'checked':''}> הסתר הושלמו
-      </label>
-    </div>`:''}
     <div id="taskTree"></div>
     ${p.tasks.length===0?'<div class="empty-state">אין משימות. לחץ על + להוספת משימה.</div>':''}
   `;
@@ -1406,11 +1548,6 @@ function renderProjectDetail(pid){
     }
   };
   document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, (ids)=>{ p.contactIds=ids; if(p.primaryContactId && !ids.includes(p.primaryContactId)) p.primaryContactId=''; save(); render();});
-  if(p.tasks.length>0){
-    document.getElementById('expandAllBtn').onclick = ()=> expandAllInProject(p);
-    document.getElementById('collapseAllBtn').onclick = ()=> collapseAllInProject(p);
-    document.getElementById('hideDoneChk').onchange = (e)=>{ hideCompletedInProject = e.target.checked; render(); };
-  }
   const tree = document.getElementById('taskTree');
   let visibleTasks = sortedSiblings(p.tasks);
   if(hideCompletedInProject) visibleTasks = visibleTasks.filter(t=>t.status!=='done');
@@ -1750,14 +1887,8 @@ function renderDashboard(){
 /* ================= Contacts + Companies tab ================= */
 function renderContactsRoot(){
   main.innerHTML = `
-    <div class="subtabs">
-      <div class="subtab ${contactsSubTab==='people'?'active':''}" id="subPeople">👤 אנשי קשר</div>
-      <div class="subtab ${contactsSubTab==='companies'?'active':''}" id="subCompanies">🏢 לקוחות/חברות</div>
-    </div>
     <div id="subContent"></div>
   `;
-  document.getElementById('subPeople').onclick = ()=>{ contactsSubTab='people'; render(); };
-  document.getElementById('subCompanies').onclick = ()=>{ contactsSubTab='companies'; render(); };
   if(contactsSubTab==='people') renderContactsList();
   else renderCompaniesList();
 }
@@ -1825,24 +1956,10 @@ function contactsByCompanyHtml(contacts, forceOpen){
 function renderContactsList(){
   const wrap = document.getElementById('subContent');
   wrap.innerHTML = `
-    <div class="row" style="margin-bottom:8px; gap:8px;">
-      <button class="btn small secondary" id="ctSortBtn" data-sort-menu="contacts" title="מיון">⇅ ${CT_SORT_LABELS[getContactsSort()]} ▾</button>
-      <button class="btn small secondary" id="expPeople">ייצוא CSV</button>
-      <button class="btn small secondary" id="impPeople">ייבוא CSV</button>
-      <input type="file" id="impPeopleFile" accept=".csv,text/csv" style="display:none;">
-    </div>
-    <input id="ctSearch" type="search" placeholder="🔍 חיפוש באנשי קשר..." value="${esc(contactsSearch)}" style="margin-bottom:10px;">
+    <input type="file" id="impPeopleFile" accept=".csv,text/csv" style="display:none;">
     <div id="peopleList"></div>
   `;
-  document.getElementById('ctSortBtn').onclick = (e)=>{
-    openSortMenu(e.currentTarget, Object.entries(CT_SORT_LABELS).map(([k,l])=>({key:k,label:l})), getContactsSort(), k=>{
-      localStorage.setItem('pm_contacts_sort', k); renderContactsList(); saveView();
-    });
-  };
-  document.getElementById('ctSearch').oninput = (e)=>{ contactsSearch = e.target.value; drawPeopleList(); };
   drawPeopleList();
-  document.getElementById('expPeople').onclick = exportContactsCsv;
-  document.getElementById('impPeople').onclick = ()=> document.getElementById('impPeopleFile').click();
   document.getElementById('impPeopleFile').onchange = (e)=> handleImportFile(e, importContactsCsv);
 }
 
@@ -1886,21 +2003,25 @@ function drawPeopleList(){
 function renderCompaniesList(){
   const wrap = document.getElementById('subContent');
   wrap.innerHTML = `
-    <div class="row" style="margin-bottom:8px;">
-      <button class="btn small secondary" id="expCo">ייצוא CSV</button>
-      <button class="btn small secondary" id="impCo">ייבוא CSV</button>
-      <input type="file" id="impCoFile" accept=".csv,text/csv" style="display:none;">
-    </div>
+    <input type="file" id="impCoFile" accept=".csv,text/csv" style="display:none;">
     <div class="card footer-note">
       פורמט ייבוא: קובץ CSV עם כותרות: <b>name, parent, phone, address, website, notes</b>.
     </div>
     <div id="coList"></div>
   `;
+  drawCompaniesList();
+  document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
+}
+let companiesSearch = '';
+function drawCompaniesList(){
   const list = document.getElementById('coList');
+  if(!list) return;
+  const q = companiesSearch.trim().toLowerCase();
+  const companies = q ? DATA.companies.filter(co=> [co.name, co.phone, co.address, co.website, co.notes, co.parentId?companyChainName(DATA.companies.find(x=>x.id===co.parentId)):''].filter(Boolean).join(' ').toLowerCase().includes(q)) : DATA.companies;
   if(DATA.companies.length===0){
     list.innerHTML = `<div class="empty-state">אין עדיין לקוחות/חברות.<br>לחץ על + כדי להוסיף.</div>`;
   } else {
-    list.innerHTML = DATA.companies.map(co=>`
+    list.innerHTML = (companies.length===0 ? '<div class="empty-state">לא נמצאו תוצאות.</div>' : '') + companies.map(co=>`
       <div class="card">
         <div class="item-head">
           <h3>${companyLogoImg(co,20)} ${esc(co.name)}</h3>
@@ -1931,9 +2052,6 @@ function renderCompaniesList(){
       });
     });
   }
-  document.getElementById('expCo').onclick = exportCompaniesCsv;
-  document.getElementById('impCo').onclick = ()=> document.getElementById('impCoFile').click();
-  document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
 }
 
 /* ================= Contact detail popup ================= */
