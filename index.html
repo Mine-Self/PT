@@ -122,6 +122,7 @@
   <div class="nav-link" data-nav="dashboard">🏠 דשבורד</div>
   <div class="nav-link" data-nav="projects">📁 פרויקטים</div>
   <div class="nav-link" data-nav="contacts">👤 אנשי קשר</div>
+  <div class="nav-link" data-nav="docs">📄 מסמכים</div>
   <div class="nav-link" data-nav="settings">⚙️ הגדרות וגיבוי</div>
 </div>
 
@@ -143,14 +144,372 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-04_0918';
+const APP_VERSION = '2026-10-04_1412';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
 if(!DATA.quickLinks) DATA.quickLinks = [];
 if(!DATA.files) DATA.files = [];
+if(!DATA.docs) DATA.docs = [];
+if(!DATA.docCats) DATA.docCats = [];
 function save(){ purgeFiles(); localStorage.setItem(STORE_KEY, JSON.stringify(DATA)); }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+/* ================= Documents (links library) ================= */
+let docSearch = '';
+let docTagFilter = [];
+const DOC_OFFSET_CHOICES = [[0,'ביום התפוגה'],[1,'יום לפני'],[3,'3 ימים לפני'],[7,'שבוע לפני'],[14,'שבועיים לפני'],[30,'חודש לפני']];
+function getDocOffsets(){
+  try{ const a = JSON.parse(localStorage.getItem('pm_doc_offsets')||'null'); if(Array.isArray(a)) return a.filter(n=>Number.isInteger(n)&&n>=0&&n<=365); }catch(e){}
+  return [7];
+}
+function getDocAlertTime(){ return localStorage.getItem('pm_doc_alert_time') || '09:00'; }
+function getClosedDocGroups(){ try{ return new Set(JSON.parse(localStorage.getItem('pm_doc_closed')||'[]')); }catch(e){ return new Set(); } }
+function setClosedDocGroups(set){ try{ localStorage.setItem('pm_doc_closed', JSON.stringify([...set])); }catch(e){} }
+function startOfToday(){ const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+function parseYmd(str){ const a = String(str).split('-').map(Number); return new Date(a[0], a[1]-1, a[2]); }
+function ymd(d){ return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function fmtYmd(str){ const a = String(str).split('-'); return `${a[2]}/${a[1]}/${a[0]}`; }
+function docDaysLeft(doc){ if(!doc.expiry) return null; return Math.round((parseYmd(doc.expiry) - startOfToday())/86400000); }
+function docWarnDays(){ const o = getDocOffsets(); return o.length ? Math.max(...o) : 7; }
+function normalizeUrl(u){
+  u = (u||'').trim(); if(!u) return '';
+  if(!/^[a-z][a-z0-9+.-]*:/i.test(u)) u = 'https://' + u;
+  try{ const x = new URL(u); if(x.protocol!=='http:' && x.protocol!=='https:') return ''; return x.href; }catch(e){ return ''; }
+}
+function urlHost(u){ try{ return new URL(u).hostname.replace(/^www\./,''); }catch(e){ return ''; } }
+function docSourceLabel(u){
+  const h = urlHost(u);
+  if(/(^|\.)(drive|docs)\.google\.com$/.test(h)) return 'Google Drive';
+  if(/(^|\.)notion\.(so|site)$/.test(h)) return 'Notion';
+  if(/(^|\.)dropbox\.com$/.test(h)) return 'Dropbox';
+  if(/(onedrive\.live\.com|1drv\.ms|sharepoint\.com)$/.test(h)) return 'OneDrive / SharePoint';
+  return h;
+}
+function docCatName(id){ const c = DATA.docCats.find(x=>x.id===id); return c ? c.name : ''; }
+function allDocTags(){
+  const m = new Map();
+  DATA.docs.forEach(d=> (d.tags||[]).forEach(t=>{ const k = t.toLowerCase(); if(!m.has(k)) m.set(k,t); }));
+  return [...m.values()].sort((a,b)=> a.localeCompare(b,'he'));
+}
+function sortDocs(list){
+  const so = getSort(); if(so==='created') return list;
+  const a = list.slice();
+  if(so==='name') a.sort((x,y)=> x.name.localeCompare(y.name,'he'));
+  else a.sort((x,y)=>{ if(x.expiry===y.expiry) return 0; if(!x.expiry) return 1; if(!y.expiry) return -1; return x.expiry<y.expiry?-1:1; });
+  return a;
+}
+function docMatches(d, q){
+  return (d.name+' '+(d.note||'')+' '+urlHost(d.url)+' '+(d.tags||[]).join(' ')+' '+docCatName(d.catId)).toLowerCase().includes(q);
+}
+function docExpiryBadge(doc){
+  const n = docDaysLeft(doc); if(n===null) return '';
+  const base = 'font-size:12px; font-weight:600; margin-top:4px;';
+  if(n<0) return `<div style="${base} color:var(--red);">❌ פג תוקף ב-${fmtYmd(doc.expiry)}</div>`;
+  if(n===0) return `<div style="${base} color:var(--red);">⚠️ פג תוקף היום</div>`;
+  if(n<=docWarnDays()) return `<div style="${base} color:#e08a00;">⏳ תוקף עד ${fmtYmd(doc.expiry)} (עוד ${n} ${n===1?'יום':'ימים'})</div>`;
+  return `<div class="muted" style="font-size:12px; margin-top:4px;">🗓️ תוקף עד ${fmtYmd(doc.expiry)}</div>`;
+}
+function docIsAttention(doc){ const n = docDaysLeft(doc); return n!==null && n <= docWarnDays(); }
+function docCardHtml(d){
+  const tags = (d.tags||[]).map(t=>`<span class="chip" data-tagf="${esc(t)}" style="cursor:pointer;">#${esc(t)}</span>`).join(' ');
+  const host = urlHost(d.url);
+  return `<div class="card" style="padding:10px; margin-top:6px;">
+    <div class="item-head">
+      <div style="min-width:0; flex:1;">
+        <a href="${esc(d.url)}" target="_blank" rel="noopener noreferrer" style="color:var(--accent); font-weight:700; font-size:14px; text-decoration:none; word-break:break-word;">${d.kind==='folder'?'📁':'📄'} ${esc(d.name)}</a>
+        <div class="muted" style="font-size:11px;"><img src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(host)}" alt="" style="width:14px;height:14px;vertical-align:middle;border-radius:3px;" onerror="this.style.display='none'"> ${esc(docSourceLabel(d.url))}</div>
+      </div>
+      <div class="row" style="gap:2px; flex:none;">
+        <button class="icon-btn" data-doc-copy="${d.id}" title="העתק קישור">📋</button>
+        <button class="icon-btn" data-doc-edit="${d.id}" title="עריכה">✏️</button>
+      </div>
+    </div>
+    ${tags?`<div style="margin-top:4px;">${tags}</div>`:''}
+    ${d.note?`<div class="muted" style="margin-top:4px; white-space:pre-wrap;">${esc(d.note)}</div>`:''}
+    ${docExpiryBadge(d)}
+  </div>`;
+}
+function docsListInner(){
+  const q = docSearch.trim().toLowerCase();
+  const tf = docTagFilter.map(t=>t.toLowerCase());
+  const filtering = !!q || tf.length>0;
+  let list = DATA.docs.filter(d=> (!q || docMatches(d,q)) && tf.every(t=> (d.tags||[]).some(x=>x.toLowerCase()===t)));
+  list = sortDocs(list);
+  const closed = getClosedDocGroups();
+  const groups = DATA.docCats.map(c=>({key:c.id, title:c.name, docs:list.filter(d=>d.catId===c.id)}));
+  const none = list.filter(d=> !DATA.docCats.some(c=>c.id===d.catId));
+  if(none.length) groups.push({key:'__none', title:'ללא קטגוריה', docs:none});
+  const tags = allDocTags();
+  const tagBar = tags.length ? `<div style="margin-bottom:8px;">${tags.map(t=>{
+    const on = tf.includes(t.toLowerCase());
+    return `<span class="chip" data-tagf="${esc(t)}" style="cursor:pointer; ${on?'background:var(--primary); color:#fff;':''}">#${esc(t)}</span>`;
+  }).join(' ')}${tf.length?` <button class="btn small secondary" data-tag-clear>נקה סינון</button>`:''}</div>` : '';
+  let body;
+  if(DATA.docs.length===0){
+    body = `<div class="empty-state">אין עדיין קישורים.<br>לחץ על + כדי להוסיף קישור למסמך או לתיקייה.</div>`;
+  } else {
+    body = groups.filter(g=> g.docs.length || !filtering).map(g=>{
+      const open = filtering || !closed.has(g.key);
+      const att = g.docs.filter(docIsAttention).length;
+      return `<div class="card" style="padding:0;">
+        <div class="item-head" data-doc-group="${esc(g.key)}" style="padding:12px 14px; cursor:pointer;">
+          <h3>${open?'▾':'◂'} ${esc(g.title)}</h3>
+          <span class="muted">${g.docs.length} קישורים${att?` · <span style="color:#e08a00">⚠️ ${att}</span>`:''}</span>
+        </div>
+        ${open?`<div style="padding:0 10px 10px;">${g.docs.map(docCardHtml).join('') || '<div class="muted" style="padding:6px;">אין קישורים בקטגוריה</div>'}</div>`:''}
+      </div>`;
+    }).join('') || '<div class="empty-state">לא נמצאו תוצאות.</div>';
+  }
+  return `<div class="row" style="margin-bottom:10px; gap:8px;">
+      <button class="btn small secondary" data-sort-cycle title="החלף מיון">⇅ ${getSort()==='due'?'תאריך תוקף':SORT_LABELS[getSort()]}</button>
+      <button class="btn small secondary" id="docCatsBtn">🗂️ קטגוריות</button>
+    </div>${tagBar}${body}`;
+}
+function bindDocs(){
+  main.querySelectorAll('[data-tagf]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const t = el.dataset.tagf, k = t.toLowerCase();
+      const i = docTagFilter.findIndex(x=>x.toLowerCase()===k);
+      if(i>-1) docTagFilter.splice(i,1); else docTagFilter.push(t);
+      renderDocsListOnly();
+    });
+  });
+  main.querySelectorAll('[data-tag-clear]').forEach(el=> el.addEventListener('click', ()=>{ docTagFilter = []; renderDocsListOnly(); }));
+  main.querySelectorAll('[data-doc-group]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const set = getClosedDocGroups(); const k = el.dataset.docGroup;
+      if(set.has(k)) set.delete(k); else set.add(k);
+      setClosedDocGroups(set); renderDocsListOnly();
+    });
+  });
+  main.querySelectorAll('[data-doc-edit]').forEach(el=> el.addEventListener('click', ()=>{ const d = DATA.docs.find(x=>x.id===el.dataset.docEdit); if(d) openDocModal(d); }));
+  main.querySelectorAll('[data-doc-copy]').forEach(el=> el.addEventListener('click', async ()=>{
+    const d = DATA.docs.find(x=>x.id===el.dataset.docCopy); if(!d) return;
+    const ok = await copyText(d.url);
+    el.textContent = ok ? '✔️' : '⚠️';
+    setTimeout(()=>{ el.textContent = '📋'; }, 1200);
+  }));
+  const cb = document.getElementById('docCatsBtn'); if(cb) cb.onclick = ()=> openDocCatsModal();
+}
+async function copyText(t){
+  try{ await navigator.clipboard.writeText(t); return true; }
+  catch(e){
+    const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select();
+    let ok = false; try{ ok = document.execCommand('copy'); }catch(e2){}
+    ta.remove(); return ok;
+  }
+}
+function renderDocs(){
+  main.innerHTML = `
+    <input id="docSearchBox" placeholder="🔍 חיפוש לפי שם, תגית, קטגוריה..." value="${esc(docSearch)}" style="margin-bottom:10px;">
+    <div id="docsInner">${docsListInner()}</div>`;
+  const sb = document.getElementById('docSearchBox');
+  sb.addEventListener('input', ()=>{ docSearch = sb.value; renderDocsListOnly(); });
+  bindDocs();
+}
+function renderDocsListOnly(){
+  const inner = document.getElementById('docsInner');
+  if(!inner){ renderDocs(); return; }
+  inner.innerHTML = docsListInner();
+  bindDocs();
+}
+
+function openDocModal(doc){
+  const isEdit = !!doc;
+  let tags = isEdit ? [...(doc.tags||[])] : [];
+  const bg = openModalEl(`
+    <h2>${isEdit?'עריכת קישור':'קישור חדש'}</h2>
+    <label>שם (אם ריק - יילקח משם האתר)</label>
+    <input id="dName" value="${isEdit?esc(doc.name):''}">
+    <label>כתובת (URL) *</label>
+    <input id="dUrl" inputmode="url" dir="ltr" placeholder="https://..." value="${isEdit?esc(doc.url):''}">
+    <label>סוג</label>
+    <select id="dKind">
+      <option value="doc" ${isEdit&&doc.kind!=='folder'?'selected':''}>📄 מסמך</option>
+      <option value="folder" ${isEdit&&doc.kind==='folder'?'selected':''}>📁 תיקייה</option>
+    </select>
+    <label>קטגוריה</label>
+    <div class="row"><select id="dCat" style="flex:1;"></select><button class="btn small secondary" id="dAddCat" type="button">+ חדשה</button></div>
+    <label>תגיות</label>
+    <div id="dTagsWrap"></div>
+    <div class="row" style="margin-top:4px;"><input id="dTagIn" placeholder="הקלד תגית" style="flex:1;"><button class="btn small secondary" id="dTagAdd" type="button">הוסף</button></div>
+    <div id="dTagSugg" style="margin-top:4px;"></div>
+    <label>תאריך תוקף (אופציונלי)</label>
+    <input id="dExpiry" type="date" value="${isEdit?esc(doc.expiry||''):''}">
+    <label>הערה</label>
+    <textarea id="dNote" rows="2">${isEdit?esc(doc.note||''):''}</textarea>
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" id="dSave">שמירה</button>
+      <button class="btn secondary" id="dCancel">ביטול</button>
+      ${isEdit?'<button class="btn danger" id="dDelete">מחיקה</button>':''}
+    </div>
+  `);
+  function fillCats(sel){
+    bg.querySelector('#dCat').innerHTML = `<option value="">ללא קטגוריה</option>` + DATA.docCats.map(c=>`<option value="${c.id}" ${sel===c.id?'selected':''}>${esc(c.name)}</option>`).join('');
+  }
+  fillCats(isEdit?doc.catId:'');
+  bg.querySelector('#dAddCat').onclick = ()=>{
+    const n = (prompt('שם הקטגוריה החדשה:')||'').trim(); if(!n) return;
+    const c = {id: uid(), name: n}; DATA.docCats.push(c); save(); fillCats(c.id);
+  };
+  function drawTags(){
+    bg.querySelector('#dTagsWrap').innerHTML = tags.map((t,i)=>`<span class="chip">#${esc(t)} <button data-trm="${i}" type="button">✕</button></span>`).join('') || '<span class="muted">אין תגיות</span>';
+    bg.querySelectorAll('[data-trm]').forEach(b=> b.onclick = ()=>{ tags.splice(+b.dataset.trm,1); drawTags(); });
+    const q = bg.querySelector('#dTagIn').value.trim().toLowerCase();
+    const sugg = allDocTags().filter(t=> !tags.some(x=>x.toLowerCase()===t.toLowerCase()) && (!q || t.toLowerCase().includes(q))).slice(0,12);
+    bg.querySelector('#dTagSugg').innerHTML = sugg.map(t=>`<span class="chip" data-tsg="${esc(t)}" style="cursor:pointer;">+ ${esc(t)}</span>`).join(' ');
+    bg.querySelectorAll('[data-tsg]').forEach(b=> b.onclick = ()=>{ tags.push(b.dataset.tsg); bg.querySelector('#dTagIn').value=''; drawTags(); });
+  }
+  function addTagFromInput(){
+    const inp = bg.querySelector('#dTagIn');
+    inp.value.split(',').map(x=>x.trim().replace(/^#/,'')).filter(Boolean).forEach(t=>{
+      if(!tags.some(x=>x.toLowerCase()===t.toLowerCase())) tags.push(t);
+    });
+    inp.value = ''; drawTags();
+  }
+  drawTags();
+  bg.querySelector('#dTagAdd').onclick = addTagFromInput;
+  bg.querySelector('#dTagIn').addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); addTagFromInput(); } });
+  bg.querySelector('#dTagIn').addEventListener('input', drawTags);
+  bg.querySelector('#dCancel').onclick = ()=> closeModal(bg);
+  bg.querySelector('#dSave').onclick = ()=>{
+    const url = normalizeUrl(bg.querySelector('#dUrl').value);
+    if(!url){ alert('נא להזין כתובת תקינה (http או https)'); return; }
+    if(bg.querySelector('#dTagIn').value.trim()) addTagFromInput();
+    const vals = {
+      name: bg.querySelector('#dName').value.trim() || urlHost(url) || url,
+      url, kind: bg.querySelector('#dKind').value, catId: bg.querySelector('#dCat').value,
+      tags: tags.slice(), expiry: bg.querySelector('#dExpiry').value || '', note: bg.querySelector('#dNote').value
+    };
+    let d;
+    if(isEdit){ Object.assign(doc, vals); d = doc; }
+    else { d = {id: uid(), ...vals, created: toLocalInputValue(new Date()), alertsFired: []}; DATA.docs.push(d); }
+    save(); closeModal(bg); render();
+  };
+  if(isEdit){
+    bg.querySelector('#dDelete').onclick = ()=>{
+      if(confirm('למחוק את הקישור "'+doc.name+'"?')){ DATA.docs = DATA.docs.filter(x=>x.id!==doc.id); save(); closeModal(bg); render(); }
+    };
+  }
+}
+
+function openDocCatsModal(){
+  const bg = openModalEl(`
+    <h2>קטגוריות</h2>
+    <div id="catList"></div>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn small" id="catNew">+ קטגוריה חדשה</button>
+      <button class="btn small secondary" id="catClose">סגירה</button>
+    </div>
+  `);
+  function draw(){
+    bg.querySelector('#catList').innerHTML = DATA.docCats.map(c=>{
+      const n = DATA.docs.filter(d=>d.catId===c.id).length;
+      return `<div class="card" style="padding:8px; margin-top:6px;"><div class="item-head"><span style="font-weight:600;">${esc(c.name)} <span class="muted">(${n})</span></span>
+        <span class="row" style="gap:2px;"><button class="icon-btn" data-cren="${c.id}">✏️</button><button class="icon-btn" data-cdel="${c.id}">🗑️</button></span></div></div>`;
+    }).join('') || '<div class="muted">אין קטגוריות עדיין</div>';
+    bg.querySelectorAll('[data-cren]').forEach(b=> b.onclick = ()=>{
+      const c = DATA.docCats.find(x=>x.id===b.dataset.cren);
+      const n = (prompt('שם חדש לקטגוריה:', c.name)||'').trim();
+      if(n){ c.name = n; save(); draw(); render(); }
+    });
+    bg.querySelectorAll('[data-cdel]').forEach(b=> b.onclick = ()=>{
+      const c = DATA.docCats.find(x=>x.id===b.dataset.cdel);
+      openDocCatDeleteModal(c, ()=>{ draw(); render(); });
+    });
+  }
+  draw();
+  bg.querySelector('#catNew').onclick = ()=>{
+    const n = (prompt('שם הקטגוריה החדשה:')||'').trim(); if(!n) return;
+    DATA.docCats.push({id: uid(), name: n}); save(); draw(); render();
+  };
+  bg.querySelector('#catClose').onclick = ()=> closeModal(bg);
+}
+function openDocCatDeleteModal(cat, onDone){
+  const n = DATA.docs.filter(d=>d.catId===cat.id).length;
+  const bg = openModalEl(`
+    <h2>מחיקת קטגוריה</h2>
+    <div>למחוק את הקטגוריה "<b>${esc(cat.name)}</b>"?</div>
+    ${n?`<label class="row" style="cursor:pointer; margin-top:10px; justify-content:flex-start;"><input type="checkbox" id="delLinks" style="width:auto;"> מחק גם את הקישורים בקטגוריה (${n})</label>
+    <div class="muted" style="font-size:12px; margin-top:4px;">אם לא תסמן, הקישורים יעברו ל"ללא קטגוריה".</div>`:''}
+    <div class="row" style="margin-top:14px;">
+      <button class="btn danger" id="cdYes">מחיקה</button>
+      <button class="btn secondary" id="cdNo">ביטול</button>
+    </div>
+  `, {center:true});
+  bg.querySelector('#cdNo').onclick = ()=> closeModal(bg);
+  bg.querySelector('#cdYes').onclick = ()=>{
+    const delLinks = !!(bg.querySelector('#delLinks') && bg.querySelector('#delLinks').checked);
+    if(delLinks) DATA.docs = DATA.docs.filter(d=>d.catId!==cat.id);
+    else DATA.docs.forEach(d=>{ if(d.catId===cat.id) d.catId = ''; });
+    DATA.docCats = DATA.docCats.filter(c=>c.id!==cat.id);
+    save(); closeModal(bg); onDone();
+  };
+}
+
+/* ---- Document expiry alerts: only on workdays; a non-workday moves back to the previous workday ---- */
+function docAlertDates(doc){
+  if(!doc.expiry) return [];
+  const exp = parseYmd(doc.expiry); if(isNaN(exp.getTime())) return [];
+  const wd = getWorkdays();
+  const tm = getDocAlertTime().split(':').map(Number);
+  const seen = new Set(); const out = [];
+  for(const off of getDocOffsets()){
+    let d = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate()-off);
+    if(wd.length){ let g = 0; while(!wd.includes(d.getDay()) && g++ < 7) d = new Date(d.getFullYear(), d.getMonth(), d.getDate()-1); }
+    d.setHours(tm[0]||0, tm[1]||0, 0, 0);
+    const key = toLocalInputValue(d);
+    if(seen.has(key)) continue;
+    seen.add(key); out.push({key, when: d});
+  }
+  return out;
+}
+function suppressPastDocAlerts(onlyDoc){
+  const now = new Date();
+  (onlyDoc ? [onlyDoc] : DATA.docs).forEach(d=>{
+    d.alertsFired = docAlertDates(d).filter(a=>a.when <= now).map(a=>a.key);
+  });
+  if(!onlyDoc) save();
+}
+function fireDocNotification(doc){
+  const n = docDaysLeft(doc);
+  const when = n===0 ? 'היום' : (n===1 ? 'מחר' : `בעוד ${n} ימים`);
+  const title = `📄 תוקף מסמך: ${doc.name}`;
+  const opts = { body: `פג תוקף ${when} (${fmtYmd(doc.expiry)})`, icon:'icon-192.png', badge:'icon-192.png', tag:'doc-'+doc.id, data:{ docId: doc.id } };
+  if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+    navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
+  } else if('Notification' in window && Notification.permission==='granted'){
+    try{ const nt = new Notification(title, opts); nt.onclick = ()=>{ window.focus(); goToTab('docs'); nt.close(); }; }catch(e){}
+  }
+}
+function checkDocAlerts(){
+  const now = new Date(); const today = ymd(now); let changed = false;
+  for(const doc of (DATA.docs||[])){
+    if(!doc.expiry || doc.expiry < today) continue;
+    if(!doc.alertsFired) doc.alertsFired = [];
+    const due = docAlertDates(doc).filter(a=> a.when <= now && !doc.alertsFired.includes(a.key));
+    if(due.length){
+      fireDocNotification(doc);
+      due.forEach(a=> doc.alertsFired.push(a.key));
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/* ---- Snooze for task notifications (moves only the notification, never the due date) ---- */
+function snoozeItem(projectId, itemId, minutes, atLocal){
+  const p = findProject(projectId); const it = p && findItem(p.tasks, itemId); if(!it) return null;
+  const at = atLocal || toLocalInputValue(new Date(Date.now() + minutes*60000));
+  it.snoozes = [{id: uid(), at}];
+  save();
+  return at;
+}
+function openFocusFromNotification(pid, iid){
+  const p = findProject(pid);
+  if(p && findItem(p.tasks, iid)) setTimeout(()=> openFocusModal(iid, p, {snooze:true}), 200);
+}
 
 /* ================= Attached files (IndexedDB) ================= */
 const FILE_INFO = {};   // id -> meta of every blob that exists on this device
@@ -674,6 +1033,7 @@ document.getElementById('fab').addEventListener('click', ()=>{
   else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1, project: findProject(currentProjectId)});
   else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
   else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
+  else if(currentTab==='docs') openDocModal();
 });
 
 /* ---------- Menu bubble: floating button at bottom-right ---------- */
@@ -713,6 +1073,8 @@ function updatePageTitle(){
     t = p ? p.name : 'פרויקטים';
   } else if(currentTab==='contacts'){
     t = contactsSubTab==='companies' ? 'חברות' : 'אנשי קשר';
+  } else if(currentTab==='docs'){
+    t = 'מסמכים';
   } else if(currentTab==='overdue'){
     t = 'משימות באיחור';
   } else if(currentTab==='settings'){
@@ -748,6 +1110,8 @@ function render(){
     else renderProjectsList();
   } else if(currentTab==='contacts'){
     renderContactsRoot();
+  } else if(currentTab==='docs'){
+    renderDocs();
   } else if(currentTab==='overdue'){
     renderOverdueScreen();
   } else if(currentTab==='dashboard'){
@@ -1347,9 +1711,61 @@ function renderContactsRoot(){
   else renderCompaniesList();
 }
 
+function getContactsView(){ return localStorage.getItem('pm_contacts_view')==='company' ? 'company' : 'name'; }
+function getOpenContactGroups(){ try{ return new Set(JSON.parse(localStorage.getItem('pm_contact_open')||'[]')); }catch(e){ return new Set(); } }
+function setOpenContactGroups(set){ try{ localStorage.setItem('pm_contact_open', JSON.stringify([...set])); }catch(e){} }
+function contactCardHtml(c, groupCoId){
+  const co = DATA.companies.find(x=>x.id===c.companyId);
+  const mgr = DATA.contacts.find(x=>x.id===c.managerId);
+  const showCo = co && (groupCoId===undefined || co.id!==groupCoId);
+  return `<div class="card">
+    <div class="item-head">
+      <h3>👤 ${esc(c.name)}</h3>
+      <div class="row" style="gap:2px;">
+        <button class="icon-btn" data-editc="${c.id}">✏️</button>
+        <button class="icon-btn" data-delc="${c.id}">🗑️</button>
+      </div>
+    </div>
+    ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
+    ${showCo?`<div class="muted">${companyInline(co,16)}</div>`:''}
+    ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}${(()=>{const mc=DATA.companies.find(x=>x.id===mgr.companyId);return mc?' – '+esc(mc.name):'';})()}</div>`:''}
+    <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
+    ${c.address?`<div class="muted">📍 ${esc(c.address)}</div>`:''}
+    ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
+  </div>`;
+}
+function contactsByCompanyHtml(){
+  const open = getOpenContactGroups();
+  const sorted = DATA.contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he'));
+  const groups = [];
+  for(const co of DATA.companies){
+    const ids = companyAndDescendantIds(co.id);
+    const cs = sorted.filter(c=>ids.has(c.companyId));
+    if(cs.length) groups.push({key:co.id, title:co.name, logo:companyLogoImg(co,20), cs, coId:co.id, sort:co.name});
+  }
+  groups.sort((x,y)=> x.sort.localeCompare(y.sort,'he'));
+  const orphans = sorted.filter(c=>!DATA.companies.some(x=>x.id===c.companyId));
+  if(orphans.length) groups.push({key:'__none', title:'ללא חברה', logo:'', cs:orphans, coId:null});
+  return groups.map(g=>{
+    const isOpen = open.has(g.key);
+    return `<div class="card" style="padding:0;">
+      <div class="item-head" data-contact-group="${esc(g.key)}" style="padding:12px 14px; cursor:pointer;">
+        <h3>${isOpen?'▾':'◂'} ${g.logo} ${esc(g.title)}</h3>
+        <span class="muted">${g.cs.length} אנשי קשר</span>
+      </div>
+      ${isOpen?`<div style="padding:0 10px 10px;">${g.cs.map(c=>contactCardHtml(c, g.coId)).join('')}</div>`:''}
+    </div>`;
+  }).join('');
+}
+
 function renderContactsList(){
   const wrap = document.getElementById('subContent');
+  const view = getContactsView();
   wrap.innerHTML = `
+    <div class="row" style="margin-bottom:8px; gap:8px;">
+      <button class="tab ${view==='name'?'active':''}" data-cview="name">לפי שם</button>
+      <button class="tab ${view==='company'?'active':''}" data-cview="company">לפי חברה</button>
+    </div>
     <div class="row" style="margin-bottom:8px;">
       <button class="btn small secondary" id="expPeople">ייצוא CSV</button>
       <button class="btn small secondary" id="impPeople">ייבוא CSV</button>
@@ -1357,29 +1773,18 @@ function renderContactsList(){
     </div>
     <div id="peopleList"></div>
   `;
+  wrap.querySelectorAll('[data-cview]').forEach(el=> el.addEventListener('click', ()=>{ localStorage.setItem('pm_contacts_view', el.dataset.cview); renderContactsList(); saveView(); }));
   const list = document.getElementById('peopleList');
   if(DATA.contacts.length===0){
     list.innerHTML = `<div class="empty-state">אין אנשי קשר עדיין.<br>לחץ על + כדי להוסיף.</div>`;
   } else {
-    list.innerHTML = DATA.contacts.map(c=>{
-      const co = DATA.companies.find(x=>x.id===c.companyId);
-      const mgr = DATA.contacts.find(x=>x.id===c.managerId);
-      return `<div class="card">
-        <div class="item-head">
-          <h3>👤 ${esc(c.name)}</h3>
-          <div class="row" style="gap:2px;">
-            <button class="icon-btn" data-editc="${c.id}">✏️</button>
-            <button class="icon-btn" data-delc="${c.id}">🗑️</button>
-          </div>
-        </div>
-        ${c.role?`<div class="muted">תפקיד: ${esc(c.role)}</div>`:''}
-        ${co?`<div class="muted">${companyInline(co,16)}</div>`:''}
-        ${mgr?`<div class="muted">מנהל/ת: ${esc(mgr.name)}${(()=>{const mc=DATA.companies.find(x=>x.id===mgr.companyId);return mc?' – '+esc(mc.name):'';})()}</div>`:''}
-        <div class="muted">${c.phone?`📞 ${esc(c.phone)} `:''}${c.email?`✉️ ${esc(c.email)}`:''}</div>
-        ${c.address?`<div class="muted">📍 ${esc(c.address)}</div>`:''}
-        ${c.notes?`<div class="muted">${esc(c.notes)}</div>`:''}
-      </div>`;
-    }).join('');
+    if(view==='company') list.innerHTML = contactsByCompanyHtml();
+    else list.innerHTML = DATA.contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he')).map(c=>contactCardHtml(c)).join('');
+    list.querySelectorAll('[data-contact-group]').forEach(el=> el.addEventListener('click', ()=>{
+      const set = getOpenContactGroups(); const k = el.dataset.contactGroup;
+      if(set.has(k)) set.delete(k); else set.add(k);
+      setOpenContactGroups(set); renderContactsList();
+    }));
     list.querySelectorAll('[data-editc]').forEach(el=>{
       el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
     });
@@ -1494,6 +1899,7 @@ function renderSettings(){
   const expandDef = getExpandDefault();
   const gcalId = getGcalId();
   const siteUrl = localStorage.getItem('pm_site_url') || '';
+  const docOff = getDocOffsets();
 
   const sections = [
     { id:'general', title:'⚙️ כללי', body: `
@@ -1532,6 +1938,17 @@ function renderSettings(){
     { id:'notif', title:'🔔 התראות', body: `
       <div class="muted">מצב הרשאה נוכחי: <b>${permLabel(permState)}</b></div>
       <button class="btn" id="askPerm" style="margin-top:8px;">בקש הרשאת התראות</button>
+    `},
+    { id:'docalerts', title:'📄 התראות תוקף מסמכים', body: `
+      <div class="muted">מתי להתריע לפני תאריך התוקף של מסמך (אפשר לבחור כמה):</div>
+      <div class="row" style="margin-top:6px;">
+        ${DOC_OFFSET_CHOICES.map(([n,l])=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-docoff="${n}" style="width:auto;" ${docOff.includes(n)?'checked':''}> ${l}</label>`).join('')}
+      </div>
+      <label>ימים נוספים לפני התוקף (מספרים מופרדים בפסיק)</label>
+      <input id="docOffExtra" placeholder="לדוגמה: 45, 60" value="${esc(docOff.filter(n=>!DOC_OFFSET_CHOICES.some(c=>c[0]===n)).join(', '))}">
+      <label>שעת ההתראה</label>
+      <input id="docAlertTimeInp" type="time" value="${esc(getDocAlertTime())}">
+      <div class="footer-note" style="margin-top:8px;">ההתראות נשלחות רק בימי עבודה (לפי "ימי עבודה" בהגדרות הכלליות). אם יום ההתראה חל ביום שאינו יום עבודה, ההתראה תוקדם ליום העבודה הקודם הקרוב ביותר. שינוי ההגדרות חל מעכשיו והלאה ולא מפעיל מחדש התראות שכבר עברו.</div>
     `},
     { id:'files', title:'📎 קבצים', body: `
       <div class="muted">${filesSummary()}</div>
@@ -1611,6 +2028,20 @@ function renderSettings(){
     };
   }
 
+  if(settingsOpenSection==='docalerts'){
+    const saveOff = ()=>{
+      const set = new Set([...document.querySelectorAll('[data-docoff]')].filter(x=>x.checked).map(x=>+x.dataset.docoff));
+      (document.getElementById('docOffExtra').value||'').split(/[,\s]+/).map(x=>parseInt(x,10)).filter(n=>Number.isInteger(n)&&n>=0&&n<=365).forEach(n=>set.add(n));
+      localStorage.setItem('pm_doc_offsets', JSON.stringify([...set].sort((a,b)=>a-b)));
+      const t = document.getElementById('docAlertTimeInp').value;
+      if(/^\d\d:\d\d$/.test(t)) localStorage.setItem('pm_doc_alert_time', t);
+      suppressPastDocAlerts();
+    };
+    document.querySelectorAll('[data-docoff]').forEach(cb=> cb.onchange = saveOff);
+    document.getElementById('docOffExtra').onchange = saveOff;
+    document.getElementById('docAlertTimeInp').onchange = saveOff;
+  }
+
   if(settingsOpenSection==='files'){
     const drawAll = ()=>{
       const q = document.getElementById('filesSearch').value.trim().toLowerCase();
@@ -1641,6 +2072,8 @@ function renderSettings(){
           if(!parsed.companies) parsed.companies = [];
           if(!parsed.quickLinks) parsed.quickLinks = [];
           if(!parsed.files) parsed.files = [];
+          if(!parsed.docs) parsed.docs = [];
+          if(!parsed.docCats) parsed.docCats = [];
           if(confirm('הייבוא יחליף את כל המידע הקיים. להמשיך?')){
             DATA = parsed; save(); render();
           }
@@ -1652,7 +2085,7 @@ function renderSettings(){
       if(confirm('פעולה זו תמחק את כל הפרויקטים, המשימות, אנשי הקשר והחברות. בטוח?')){
         const hadFiles = DATA.files.length || Object.keys(FILE_INFO).length;
         const wipe = hadFiles ? confirm('למחוק גם את כל הקבצים המצורפים?') : false;
-        DATA = {projects:[], contacts:[], companies:[], quickLinks:[], files:[]};
+        DATA = {projects:[], contacts:[], companies:[], quickLinks:[], files:[], docs:[], docCats:[]};
         if(wipe){ idb().then(db=>{ db.transaction('files','readwrite').objectStore('files').clear(); }); for(const k in FILE_INFO) delete FILE_INFO[k]; }
         save(); render();
       }
@@ -1927,7 +2360,7 @@ function openItemModal({item, parentList, depth, project}){
 }
 
 /* ================= Focus mode ================= */
-function openFocusModal(itemId, project){
+function openFocusModal(itemId, project, opts){
   const item = findItem(project.tasks, itemId);
   if(!item) return;
   const depth = getDepth(project.tasks, item.id);
@@ -1939,6 +2372,7 @@ function openFocusModal(itemId, project){
   focusState = {itemId: item.id, projectId: project.id};
   saveView();
   const bg = openModalEl(`
+    ${opts && opts.snooze ? '<div id="fcSnooze"></div>' : ''}
     <div class="muted">${label} · ${statusText}</div>
     <h2>${esc(item.title)}</h2>
     ${item.desc?`<div class="muted" style="white-space:pre-wrap;">${esc(item.desc)}</div>`:''}
@@ -1968,6 +2402,34 @@ function openFocusModal(itemId, project){
       <button class="btn danger" id="fcDelete">🗑️ מחיקה</button>
     </div>
   `);
+  if(opts && opts.snooze){
+    const box = bg.querySelector('#fcSnooze');
+    const confirmed = at=>{ box.innerHTML = `<div class="card" style="padding:8px;">✅ ההתראה נדחתה ל-${fmtDate(at)}</div>`; };
+    box.innerHTML = `<div class="card" style="padding:8px; border-color:var(--accent);">
+      <div style="font-weight:700; font-size:13px;">⏰ דחיית ההתראה</div>
+      <div class="muted" style="font-size:11px;">לא משנה את תאריך היעד של המשימה</div>
+      <div class="row" style="margin-top:6px;">
+        <button class="btn small secondary" data-snz="15">15 דק׳</button>
+        <button class="btn small secondary" data-snz="60">שעה</button>
+        <button class="btn small secondary" data-snz="180">3 שעות</button>
+        <button class="btn small secondary" data-snz="tom">מחר 9:00</button>
+        <button class="btn small secondary" data-snz="pick">בחר זמן</button>
+      </div></div>`;
+    box.querySelectorAll('[data-snz]').forEach(b=> b.onclick = ()=>{
+      const v = b.dataset.snz;
+      if(v==='tom'){ const t = new Date(); t.setDate(t.getDate()+1); t.setHours(9,0,0,0); confirmed(snoozeItem(project.id, item.id, 0, toLocalInputValue(t))); }
+      else if(v==='pick'){
+        const def = toLocalInputValue(new Date(Date.now()+3600000));
+        const pb = openModalEl(`<h2>דחיית ההתראה עד</h2><input id="snzAt" type="datetime-local" value="${def}"><div class="row" style="margin-top:12px;"><button class="btn" id="snzOk">אישור</button><button class="btn secondary" id="snzNo">ביטול</button></div>`, {center:true});
+        pb.querySelector('#snzNo').onclick = ()=> closeModal(pb);
+        pb.querySelector('#snzOk').onclick = ()=>{
+          const val = pb.querySelector('#snzAt').value;
+          if(!val || new Date(val) <= new Date()){ alert('נא לבחור זמן עתידי'); return; }
+          closeModal(pb); confirmed(snoozeItem(project.id, item.id, 0, val));
+        };
+      } else confirmed(snoozeItem(project.id, item.id, parseInt(v,10)));
+    });
+  }
   let showAllUpd = false;
   function drawUpdates(){
     const all = updatesSorted(item);
@@ -2330,13 +2792,15 @@ function updateBanner(){
 function fireNotification(item, project, tag){
   const title = `⏰ ${item.title}`;
   const body = `פרויקט: ${project.name}`;
-  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: tag||item.id, data: { itemId: item.id, projectId: project.id } };
+  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: tag||item.id, data: { itemId: item.id, projectId: project.id },
+    actions: [{action:'snooze15', title:'⏰ דחה 15 דק׳'}, {action:'snooze60', title:'⏰ דחה שעה'}] };
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
   } else if('Notification' in window && Notification.permission==='granted'){
     try{
-      const n = new Notification(title, opts);
-      n.onclick = ()=>{ window.focus(); navigateToItem(project.id, item.id); n.close(); };
+      const o2 = {...opts}; delete o2.actions;
+      const n = new Notification(title, o2);
+      n.onclick = ()=>{ window.focus(); navigateToItem(project.id, item.id); openFocusFromNotification(project.id, item.id); n.close(); };
     }catch(e){}
   }
 }
@@ -2382,7 +2846,7 @@ function checkNotifications(){
   const now = new Date();
   let changed = false;
   for(const {item, project, effDone} of collectAllItemsWithEffDone()){
-    if(effDone) continue; // completed itself, or under a completed ancestor: reminders paused (not deleted)
+    if(effDone){ if((item.snoozes||[]).length){ item.snoozes = []; changed = true; } continue; } // completed itself, or under a completed ancestor: reminders paused (not deleted)
     if(item.due){
       const due = new Date(item.due);
       const already = item.lastNotified === item.due;
@@ -2402,7 +2866,16 @@ function checkNotifications(){
         changed = true;
       }
     }
+    if((item.snoozes||[]).length){
+      const dueSn = item.snoozes.filter(x=> new Date(x.at) <= now);
+      if(dueSn.length){
+        item.snoozes = item.snoozes.filter(x=> new Date(x.at) > now);
+        fireNotification(item, project, item.id+'-snz-'+Date.now());
+        changed = true;
+      }
+    }
   }
+  if(checkDocAlerts()) changed = true;
   if(changed){ save(); render(); }
 }
 
@@ -2413,18 +2886,34 @@ function navigateToItem(projectId, itemId){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active', x.dataset.tab==='projects'));
   render();
 }
+let deepLinked = false;
 function handleDeepLinkFromUrl(){
   const params = new URLSearchParams(window.location.search);
   const pid = params.get('project'), iid = params.get('item');
+  const sn = parseInt(params.get('snooze')||'0',10);
+  if(params.get('docs')){
+    deepLinked = true; goToTab('docs'); history.replaceState({}, '', window.location.pathname); return;
+  }
+  if(pid && iid && sn>0){
+    deepLinked = true; snoozeItem(pid, iid, sn); history.replaceState({}, '', window.location.pathname); return;
+  }
   if(pid && iid){
+    deepLinked = true;
     navigateToItem(pid, iid);
+    if(params.get('n')) openFocusFromNotification(pid, iid);
     history.replaceState({}, '', window.location.pathname);
   }
 }
 if(navigator.serviceWorker && navigator.serviceWorker.addEventListener){
   navigator.serviceWorker.addEventListener('message', (evt)=>{
-    if(evt.data && evt.data.type==='NAVIGATE' && evt.data.projectId && evt.data.itemId){
-      navigateToItem(evt.data.projectId, evt.data.itemId);
+    const d = evt.data || {};
+    if(d.type==='NAVIGATE' && d.projectId && d.itemId){
+      navigateToItem(d.projectId, d.itemId);
+      if(d.fromNotification) openFocusFromNotification(d.projectId, d.itemId);
+    } else if(d.type==='SNOOZE' && d.projectId && d.itemId){
+      snoozeItem(d.projectId, d.itemId, d.minutes || 15);
+    } else if(d.type==='OPEN_DOCS'){
+      goToTab('docs');
     }
   });
 }
@@ -2589,7 +3078,7 @@ let restoredView = false;
   try{ v = JSON.parse(sessionStorage.getItem('pm_view')||'null'); }catch(e){}
   if(!v) return;
   restoredView = true;
-  if(['dashboard','projects','contacts','settings','overdue'].includes(v.tab)) currentTab = v.tab;
+  if(['dashboard','projects','contacts','docs','settings','overdue'].includes(v.tab)) currentTab = v.tab;
   if(v.projectId && DATA.projects.some(p=>p.id===v.projectId)) currentProjectId = v.projectId;
   else if(currentTab==='projects') currentProjectId = null;
   if(v.sub==='people' || v.sub==='companies') contactsSubTab = v.sub;
@@ -2606,7 +3095,7 @@ handleDeepLinkFromUrl();
 saveView();
 loadFileInfo();
 checkNotifications();
-if(!restoredView) setTimeout(maybeShowOverduePopup, 400);
+if(!restoredView && !deepLinked) setTimeout(maybeShowOverduePopup, 400);
 setInterval(checkNotifications, 60000);
 setInterval(updateBanner, 60000);
 setInterval(updateBackupBanner, 60000);
