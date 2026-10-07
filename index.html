@@ -210,7 +210,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-05_0050';
+const APP_VERSION = '2026-10-07_0741';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -929,6 +929,108 @@ function doBackupExport(){
   localStorage.removeItem('pm_backup_snooze');
   updateBackupBanner();
 }
+/* ---------- Google Drive backup ---------- */
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FOLDER = 'PT-Backups';
+let driveToken = null, driveTokenExp = 0, gisPromise = null;
+function getDriveClientId(){ return (localStorage.getItem('pm_gdrive_client_id')||'').trim(); }
+function driveConnected(){ return !!getDriveClientId() && localStorage.getItem('pm_gdrive_connected')==='1'; }
+function loadGis(){
+  if(window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if(gisPromise) return gisPromise;
+  gisPromise = new Promise((res,rej)=>{
+    const sc = document.createElement('script');
+    sc.src = 'https://accounts.google.com/gsi/client';
+    sc.onload = ()=>res();
+    sc.onerror = ()=>{ gisPromise=null; rej(new Error('gis load')); };
+    document.head.appendChild(sc);
+  });
+  return gisPromise;
+}
+function driveGetToken(forcePrompt){
+  if(driveToken && Date.now() < driveTokenExp - 60000) return Promise.resolve(driveToken);
+  return loadGis().then(()=> new Promise((res,rej)=>{
+    const tc = google.accounts.oauth2.initTokenClient({
+      client_id: getDriveClientId(), scope: DRIVE_SCOPE,
+      callback: r=>{
+        if(r.error || !r.access_token){ rej(new Error(r.error||'no token')); return; }
+        driveToken = r.access_token; driveTokenExp = Date.now() + (parseInt(r.expires_in,10)||3600)*1000;
+        localStorage.setItem('pm_gdrive_connected','1');
+        res(driveToken);
+      },
+      error_callback: e=> rej(new Error((e&&e.type)||'popup'))
+    });
+    tc.requestAccessToken({prompt: forcePrompt ? 'consent' : ''});
+  }));
+}
+async function driveApi(url, opts, token){
+  const r = await fetch(url, Object.assign({}, opts, {headers: Object.assign({Authorization:'Bearer '+token}, (opts&&opts.headers)||{})}));
+  if(!r.ok) throw new Error('drive '+r.status);
+  return r.json();
+}
+async function driveUpload(blob, fileName){
+  const token = await driveGetToken(false);
+  let folderId = localStorage.getItem('pm_gdrive_folder')||'';
+  if(folderId){
+    try{ await driveApi('https://www.googleapis.com/drive/v3/files/'+folderId+'?fields=id,trashed', {}, token); }catch(e){ folderId=''; }
+  }
+  if(!folderId){
+    const q = encodeURIComponent(`name='${DRIVE_FOLDER}' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+    const found = await driveApi('https://www.googleapis.com/drive/v3/files?q='+q+'&fields=files(id)', {}, token);
+    if(found.files && found.files.length) folderId = found.files[0].id;
+    else {
+      const f = await driveApi('https://www.googleapis.com/drive/v3/files?fields=id', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name:DRIVE_FOLDER, mimeType:'application/vnd.google-apps.folder'})}, token);
+      folderId = f.id;
+    }
+    localStorage.setItem('pm_gdrive_folder', folderId);
+  }
+  const boundary = 'ptb'+Date.now();
+  const meta = JSON.stringify({name:fileName, parents:[folderId]});
+  const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n`, blob, `\r\n--${boundary}--`]);
+  await driveApi('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {method:'POST', headers:{'Content-Type':'multipart/related; boundary='+boundary}, body}, token);
+}
+function backupFileName(){
+  const d = new Date();
+  return `pm-backup_${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}.json`;
+}
+function markBackupDone(){
+  localStorage.setItem('pm_last_backup', new Date().toISOString());
+  localStorage.removeItem('pm_backup_snooze');
+  updateBackupBanner();
+}
+function shareBackupFile(file){
+  return navigator.share({files:[file], title:'גיבוי אפליקציית פרויקטים'});
+}
+async function doBackupToDrive(){
+  const name = backupFileName();
+  const blob = new Blob([JSON.stringify(DATA,null,2)], {type:'application/json'});
+  if(getDriveClientId()){
+    try{
+      await driveUpload(blob, name);
+      markBackupDone();
+      alert('✅ הגיבוי נשמר בדרייב (תיקייה '+DRIVE_FOLDER+')');
+      if(currentTab==='settings') renderSettings();
+      return;
+    }catch(e){ /* fall through to share */ }
+  }
+  const file = new File([blob], name, {type:'application/json'});
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await shareBackupFile(file); markBackupDone(); return; }
+    catch(e){
+      if(e && e.name==='AbortError') return;
+      // user gesture may have expired after the failed Google attempt: ask for a fresh tap
+      const bg = openModalEl(`<h2>שיתוף גיבוי</h2><div class="muted">החיבור ישירות לדרייב לא הצליח. לחץ לשיתוף ובחר Drive.</div><div class="row" style="margin-top:12px;"><button class="btn" id="shNow">שתף</button><button class="btn secondary" id="shCancel">ביטול</button></div>`, {center:true});
+      bg.querySelector('#shCancel').onclick = ()=> closeModal(bg);
+      bg.querySelector('#shNow').onclick = async ()=>{
+        try{ await shareBackupFile(file); markBackupDone(); closeModal(bg); }
+        catch(e2){ if(!(e2&&e2.name==='AbortError')){ closeModal(bg); doBackupExport(); } }
+      };
+      return;
+    }
+  }
+  alert('לא ניתן להתחבר לדרייב או לשתף מהמכשיר הזה. הגיבוי יורד כקובץ.');
+  doBackupExport();
+}
 function backupDue(){
   const f = getBackupFreq(); if(f==='none') return false;
   const now = new Date();
@@ -958,8 +1060,9 @@ function updateBackupBanner(){
     el.id = 'backupBanner';
     el.className = 'banner';
     el.style.cursor = 'default';
-    el.innerHTML = `<div>💾 הגיע הזמן לגבות את המידע</div><div class="row" style="margin-top:8px;"><button class="btn small" id="bkNow">גבה כעת</button><button class="btn small secondary" id="bkSnooze">דחה עד מחר</button></div>`;
+    el.innerHTML = `<div>💾 הגיע הזמן לגבות את המידע</div><div class="row" style="margin-top:8px;"><button class="btn small" id="bkNow">גבה כעת</button><button class="btn small" id="bkDrive">שמור בדרייב</button><button class="btn small secondary" id="bkSnooze">דחה עד מחר</button></div>`;
     el.querySelector('#bkNow').onclick = ()=> doBackupExport();
+    el.querySelector('#bkDrive').onclick = ()=> doBackupToDrive();
     el.querySelector('#bkSnooze').onclick = ()=>{
       const t = new Date(); t.setDate(t.getDate()+1); t.setHours(0,0,0,0);
       localStorage.setItem('pm_backup_snooze', String(t.getTime()));
@@ -1089,7 +1192,7 @@ if(window.matchMedia){
 /* ================= Navigation state ================= */
 let currentTab = 'dashboard';
 let currentProjectId = null;
-let contactsSubTab = 'people';
+let contactsSubTab = 'companies';
 let highlightItemId = null;
 let collapsedIds = new Set();
 let initializedCollapse = new Set();
@@ -1115,9 +1218,21 @@ document.querySelectorAll('.nav-link').forEach(el=>{
 function doAdd(){
   if(currentTab==='projects' && !currentProjectId) openProjectModal();
   else if(currentTab==='projects' && currentProjectId) openItemModal({parentList: findProject(currentProjectId).tasks, depth:1, project: findProject(currentProjectId)});
-  else if(currentTab==='contacts' && contactsSubTab==='people') openContactModal();
-  else if(currentTab==='contacts' && contactsSubTab==='companies') openCompanyModal();
+  else if(currentTab==='contacts') openContactOrCompanyChoice();
   else if(currentTab==='docs') openDocModal();
+}
+function openContactOrCompanyChoice(){
+  const bg = openModalEl(`
+    <h2>מה להוסיף?</h2>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" id="chPerson">👤 איש קשר</button>
+      <button class="btn" id="chCompany">🏢 חברה</button>
+    </div>
+    <div class="row" style="margin-top:10px;"><button class="btn secondary" id="chCancel">ביטול</button></div>
+  `, {center:true});
+  bg.querySelector('#chPerson').onclick = ()=>{ closeModal(bg); openContactModal(); };
+  bg.querySelector('#chCompany').onclick = ()=>{ closeModal(bg); openCompanyModal(); };
+  bg.querySelector('#chCancel').onclick = ()=> closeModal(bg);
 }
 document.getElementById('fab').addEventListener('click', doAdd);
 
@@ -1219,14 +1334,15 @@ function barItems(k){
   const it = [{id:'menu', label:'תפריט'}];
   if(['projects','people','companies','docs'].includes(k)) it.push({id:'search', label:'חיפוש'});
   if(['projects','project','people','docs'].includes(k)) it.push({id:'sort', label:'מיון'});
-  if(['projects','people','companies'].includes(k)) it.push({id:'view', label:'תצוגה'});
+  if(k==='projects') it.push({id:'view', label:'תצוגה'});
   if(k!=='plain') it.push({id:'more', label:'עוד'});
   return it;
 }
 function barMoreOptions(k){
   if(k==='projects') return [{key:'hideClosed', label:'הסתר סגורים', on:getHideClosed()}];
   if(k==='project') return [{key:'expand', label:'הרחב הכל'},{key:'collapse', label:'כווץ הכל'},{key:'hideDone', label:'הסתר הושלמו', on:hideCompletedInProject}];
-  if(k==='people' || k==='companies') return [{key:'exp', label:'ייצוא CSV'},{key:'imp', label:'ייבוא CSV'}];
+  if(k==='companies') return [{key:'goPeople', label:'אנשי קשר'},{key:'exp', label:'ייצוא CSV'},{key:'imp', label:'ייבוא CSV'}];
+  if(k==='people') return [{key:'goCompanies', label:'חברות'},{key:'exp', label:'ייצוא CSV'},{key:'imp', label:'ייבוא CSV'}];
   if(k==='docs') return [{key:'cats', label:'ניהול קטגוריות'}];
   return [];
 }
@@ -1238,6 +1354,8 @@ function barMore(k, btn){
     else if(key==='collapse' && p){ collapseAllInProject(p); }
     else if(key==='hideDone'){ hideCompletedInProject = !hideCompletedInProject; render(); }
     else if(key==='cats'){ openDocCatsModal(); }
+    else if(key==='goPeople'){ contactsSubTab='people'; render(); }
+    else if(key==='goCompanies'){ contactsSubTab='companies'; render(); }
     else if(key==='exp'){ if(k==='people') exportContactsCsv(); else exportCompaniesCsv(); }
     else if(key==='imp'){ const f = document.getElementById(k==='people'?'impPeopleFile':'impCoFile'); if(f) f.click(); }
   });
@@ -1254,8 +1372,6 @@ function barSort(k, btn){
 function barView(k, btn){
   if(k==='projects'){
     openSortMenu(btn, [{key:'project',label:'לפי פרויקט'},{key:'client',label:'לפי לקוח'}], getProjectsView(), key=>{ localStorage.setItem('pm_projects_view', key); renderProjectsListOnly(); });
-  } else {
-    openSortMenu(btn, [{key:'people',label:'אנשי קשר'},{key:'companies',label:'לקוחות/חברות'}], contactsSubTab, key=>{ contactsSubTab = key; render(); });
   }
 }
 function updateBar(){
@@ -1381,8 +1497,7 @@ function projectsByClientHtml(filtered){
   const searching = !!searchQuery.trim();
   const groups = [];
   for(const co of DATA.companies){
-    const ids = companyAndDescendantIds(co.id);
-    const ps = filtered.filter(p=>ids.has(p.companyId));
+    const ps = filtered.filter(p=>p.companyId===co.id);
     if(ps.length) groups.push({co, ps});
   }
   groups.sort((x,y)=> x.co.name.localeCompare(y.co.name, 'he'));
@@ -1523,7 +1638,7 @@ function renderProjectDetail(pid){
       <div class="item-head">
         <h3>${companyLogoImg(pco,22)} ${esc(p.name)}</h3>
         <div class="row" style="gap:2px;">
-          ${p.status!=='won'?`<button class="icon-btn" id="completeProjBtn" title="סמן פרויקט כהושלם">✅</button>`:''}
+          ${p.status==='won'||p.status==='lost'?`<button class="icon-btn" id="reopenProjBtn" title="פתח מחדש">↩️</button>`:`<button class="icon-btn" id="completeProjBtn" title="סמן פרויקט כהושלם">✅</button>`}
           <button class="icon-btn" id="editProjBtn">✏️</button>
         </div>
       </div>
@@ -1547,6 +1662,8 @@ function renderProjectDetail(pid){
       p.status='won'; save(); render();
     }
   };
+  const reopenBtn = document.getElementById('reopenProjBtn');
+  if(reopenBtn) reopenBtn.onclick = ()=>{ p.status='active'; save(); render(); };
   document.getElementById('addProjContactBtn').onclick = ()=> openAttachContactModal(p.contactIds, (ids)=>{ p.contactIds=ids; if(p.primaryContactId && !ids.includes(p.primaryContactId)) p.primaryContactId=''; save(); render();});
   const tree = document.getElementById('taskTree');
   let visibleTasks = sortedSiblings(p.tasks);
@@ -1934,8 +2051,7 @@ function contactsByCompanyHtml(contacts, forceOpen){
   const sorted = contacts.slice().sort((a,b)=> a.name.localeCompare(b.name,'he'));
   const groups = [];
   for(const co of DATA.companies){
-    const ids = companyAndDescendantIds(co.id);
-    const cs = sorted.filter(c=>ids.has(c.companyId));
+    const cs = sorted.filter(c=>c.companyId===co.id);
     if(cs.length) groups.push({key:co.id, title:co.name, logo:companyLogoImg(co,20), cs, coId:co.id, sort:co.name});
   }
   groups.sort((x,y)=> x.sort.localeCompare(y.sort,'he'));
@@ -1985,6 +2101,20 @@ function drawPeopleList(){
     if(set.has(k)) set.delete(k); else set.add(k);
     setOpenContactGroups(set); drawPeopleList();
   }));
+  wireContactCards(list);
+}
+
+function renderCompaniesList(){
+  const wrap = document.getElementById('subContent');
+  wrap.innerHTML = `
+    <input type="file" id="impCoFile" accept=".csv,text/csv" style="display:none;">
+    <div id="coList"></div>
+  `;
+  drawCompaniesList();
+  document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
+}
+let companiesSearch = '';
+function wireContactCards(list){
   list.querySelectorAll('[data-editc]').forEach(el=>{
     el.addEventListener('click', ()=> openContactModal(DATA.contacts.find(c=>c.id===el.dataset.editc)));
   });
@@ -1999,59 +2129,94 @@ function drawPeopleList(){
     });
   });
 }
-
-function renderCompaniesList(){
-  const wrap = document.getElementById('subContent');
-  wrap.innerHTML = `
-    <input type="file" id="impCoFile" accept=".csv,text/csv" style="display:none;">
-    <div class="card footer-note">
-      פורמט ייבוא: קובץ CSV עם כותרות: <b>name, parent, phone, address, website, notes</b>.
-    </div>
-    <div id="coList"></div>
-  `;
-  drawCompaniesList();
-  document.getElementById('impCoFile').onchange = (e)=> handleImportFile(e, importCompaniesCsv);
+function companyMatchesQuery(co, q){
+  return [co.name, co.phone, co.address, co.website, co.notes, co.parentId?companyChainName(DATA.companies.find(x=>x.id===co.parentId)||{}):''].filter(Boolean).join(' ').toLowerCase().includes(q);
 }
-let companiesSearch = '';
 function drawCompaniesList(){
   const list = document.getElementById('coList');
   if(!list) return;
   const q = companiesSearch.trim().toLowerCase();
-  const companies = q ? DATA.companies.filter(co=> [co.name, co.phone, co.address, co.website, co.notes, co.parentId?companyChainName(DATA.companies.find(x=>x.id===co.parentId)):''].filter(Boolean).join(' ').toLowerCase().includes(q)) : DATA.companies;
-  if(DATA.companies.length===0){
-    list.innerHTML = `<div class="empty-state">אין עדיין לקוחות/חברות.<br>לחץ על + כדי להוסיף.</div>`;
-  } else {
-    list.innerHTML = (companies.length===0 ? '<div class="empty-state">לא נמצאו תוצאות.</div>' : '') + companies.map(co=>`
-      <div class="card">
-        <div class="item-head">
-          <h3>${companyLogoImg(co,20)} ${esc(co.name)}</h3>
-          <div class="row" style="gap:2px;">
-            <button class="icon-btn" data-editco="${co.id}">✏️</button>
-            <button class="icon-btn" data-delco="${co.id}">🗑️</button>
-          </div>
-        </div>
-        ${co.parentId?`<div class="muted">שייך ל: ${esc(companyChainName(DATA.companies.find(x=>x.id===co.parentId)))}</div>`:''}
-        <div class="muted">${co.phone?`📞 ${esc(co.phone)} `:''}${co.website?`🌐 ${esc(co.website)}`:''}</div>
-        ${co.address?`<div class="muted">📍 ${esc(co.address)}</div>`:''}
-        ${co.notes?`<div class="muted">${esc(co.notes)}</div>`:''}
-      </div>
-    `).join('');
-    list.querySelectorAll('[data-editco]').forEach(el=>{
-      el.addEventListener('click', ()=> openCompanyModal(DATA.companies.find(c=>c.id===el.dataset.editco)));
-    });
-    list.querySelectorAll('[data-delco]').forEach(el=>{
-      el.addEventListener('click', ()=>{
-        const co = DATA.companies.find(c=>c.id===el.dataset.delco);
-        const used = DATA.contacts.some(c=>c.companyId===co.id) || DATA.companies.some(c=>c.parentId===co.id);
-        if(used && !confirm('חברה זו משויכת לאנשי קשר או לחברות-בת. מחיקה תסיר את השיוך. להמשיך?')) return;
-        if(!used && !confirm('למחוק לקוח/חברה זו?')) return;
-        DATA.companies = DATA.companies.filter(c=>c.id!==co.id);
-        DATA.contacts.forEach(c=>{ if(c.companyId===co.id) c.companyId=''; });
-        DATA.companies.forEach(c=>{ if(c.parentId===co.id) c.parentId=''; });
-        save(); render();
-      });
-    });
+  const open = getOpenContactGroups();
+  if(DATA.companies.length===0 && DATA.contacts.length===0){
+    list.innerHTML = `<div class="empty-state">אין עדיין חברות או אנשי קשר.<br>לחץ על + כדי להוסיף.</div>`;
+    return;
   }
+  const byName = (a,b)=> a.name.localeCompare(b.name,'he');
+  const groups = [];
+  for(const co of DATA.companies.slice().sort(byName)){
+    const direct = DATA.contacts.filter(c=>c.companyId===co.id).sort(byName);
+    let shown = direct, show = true;
+    if(q){
+      const coHit = companyMatchesQuery(co, q);
+      const hits = direct.filter(c=>contactMatches(c,q));
+      shown = coHit ? direct : hits;
+      show = coHit || hits.length>0;
+    }
+    if(show) groups.push({co, cs:shown, direct:direct.length});
+  }
+  let orphans = DATA.contacts.filter(c=>!DATA.companies.some(x=>x.id===c.companyId)).sort(byName);
+  if(q) orphans = orphans.filter(c=>contactMatches(c,q));
+  if(groups.length===0 && orphans.length===0){
+    list.innerHTML = `<div class="empty-state">לא נמצאו תוצאות.</div>`;
+    return;
+  }
+  let html = groups.map(({co,cs,direct})=>{
+    const isOpen = !!q || open.has(co.id);
+    const parent = co.parentId ? DATA.companies.find(x=>x.id===co.parentId) : null;
+    const details = `
+      ${parent?`<div class="muted">שייך ל: ${esc(companyChainName(parent))}</div>`:''}
+      <div class="muted">${co.phone?`📞 ${esc(co.phone)} `:''}${co.website?`🌐 ${esc(co.website)}`:''}</div>
+      ${co.address?`<div class="muted">📍 ${esc(co.address)}</div>`:''}
+      ${co.notes?`<div class="muted">${esc(co.notes)}</div>`:''}`;
+    return `<div class="card" style="padding:0;">
+      <div class="item-head" data-contact-group="${esc(co.id)}" style="padding:12px 14px; cursor:pointer;">
+        <h3>${isOpen?'▾':'◂'} ${companyLogoImg(co,20)} ${esc(co.name)}</h3>
+        <div class="row" style="gap:2px;">
+          <span class="muted">${direct} אנשי קשר</span>
+          <button class="icon-btn" data-editco="${co.id}">✏️</button>
+          <button class="icon-btn" data-delco="${co.id}">🗑️</button>
+        </div>
+      </div>
+      ${isOpen?`<div style="padding:0 10px 10px;">
+        <div style="padding:0 4px 8px;">${details}</div>
+        ${cs.length ? cs.map(c=>contactCardHtml(c, co.id)).join('') : '<div class="muted" style="padding:0 4px;">אין אנשי קשר בחברה זו</div>'}
+      </div>`:''}
+    </div>`;
+  }).join('');
+  if(orphans.length){
+    const isOpen = !!q || open.has('__none');
+    html += `<div class="card" style="padding:0;">
+      <div class="item-head" data-contact-group="__none" style="padding:12px 14px; cursor:pointer;">
+        <h3>${isOpen?'▾':'◂'} ללא חברה</h3>
+        <span class="muted">${orphans.length} אנשי קשר</span>
+      </div>
+      ${isOpen?`<div style="padding:0 10px 10px;">${orphans.map(c=>contactCardHtml(c, null)).join('')}</div>`:''}
+    </div>`;
+  }
+  list.innerHTML = html;
+  list.querySelectorAll('[data-contact-group]').forEach(el=> el.addEventListener('click', (e)=>{
+    if(e.target.closest('[data-editco],[data-delco]')) return;
+    const set = getOpenContactGroups(); const k = el.dataset.contactGroup;
+    if(set.has(k)) set.delete(k); else set.add(k);
+    setOpenContactGroups(set); drawCompaniesList();
+  }));
+  list.querySelectorAll('[data-editco]').forEach(el=>{
+    el.addEventListener('click', (e)=>{ e.stopPropagation(); openCompanyModal(DATA.companies.find(c=>c.id===el.dataset.editco)); });
+  });
+  list.querySelectorAll('[data-delco]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      const co = DATA.companies.find(c=>c.id===el.dataset.delco);
+      const used = DATA.contacts.some(c=>c.companyId===co.id) || DATA.companies.some(c=>c.parentId===co.id);
+      if(used && !confirm('חברה זו משויכת לאנשי קשר או לחברות-בת. מחיקה תסיר את השיוך. להמשיך?')) return;
+      if(!used && !confirm('למחוק לקוח/חברה זו?')) return;
+      DATA.companies = DATA.companies.filter(c=>c.id!==co.id);
+      DATA.contacts.forEach(c=>{ if(c.companyId===co.id) c.companyId=''; });
+      DATA.companies.forEach(c=>{ if(c.parentId===co.id) c.parentId=''; });
+      save(); render();
+    });
+  });
+  wireContactCards(list);
 }
 
 /* ================= Contact detail popup ================= */
@@ -2168,6 +2333,17 @@ function renderSettings(){
         <button class="btn" id="exportBtn">ייצוא גיבוי מלא (JSON)</button>
         <button class="btn secondary" id="importBtn">ייבוא גיבוי מלא</button>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <button class="btn" id="driveBtn">☁️ שמור בדרייב</button>
+      </div>
+      <label style="margin-top:14px;">חיבור Google Drive - OAuth Client ID</label>
+      <input id="driveClientId" dir="ltr" placeholder="xxxx.apps.googleusercontent.com" value="${esc(getDriveClientId())}">
+      <div class="muted" style="margin-top:4px;">מצב: <b>${getDriveClientId() ? (driveConnected()?'מחובר ✅':'מוגדר, טרם מחובר') : 'לא מוגדר (השמירה תעבור לשיתוף)'}</b></div>
+      <div class="row" style="margin-top:8px;">
+        <button class="btn small secondary" id="driveConnect">התחבר</button>
+        <button class="btn small secondary" id="driveDisconnect">נתק</button>
+      </div>
+      <div class="footer-note">ההעלאה לדרייב מתבצעת כשהאפליקציה פתוחה. הוראות הקמה מופיעות ב-README.</div>
       <input type="file" id="importFile" accept="application/json" style="display:none;">
       <div class="muted" style="margin-top:14px;">גרסת אפליקציה: <b>${esc(APP_VERSION)}</b></div>
       <div class="footer-note" style="margin-top:4px;">
@@ -2257,6 +2433,23 @@ function renderSettings(){
   if(settingsOpenSection==='backup'){
     document.getElementById('backupFreqSel').onchange = (e)=>{ localStorage.setItem('pm_backup_freq', e.target.value); localStorage.removeItem('pm_backup_snooze'); updateBackupBanner(); };
     document.getElementById('exportBtn').onclick = ()=>{ doBackupExport(); renderSettings(); };
+    document.getElementById('driveBtn').onclick = ()=> doBackupToDrive();
+    const cidInp = document.getElementById('driveClientId');
+    cidInp.onchange = ()=>{
+      const v = cidInp.value.trim();
+      if(v !== getDriveClientId()){ localStorage.setItem('pm_gdrive_client_id', v); localStorage.removeItem('pm_gdrive_connected'); localStorage.removeItem('pm_gdrive_folder'); driveToken=null; }
+      renderSettings();
+    };
+    document.getElementById('driveConnect').onclick = ()=>{
+      const v = cidInp.value.trim();
+      if(!v){ alert('נא להזין Client ID'); return; }
+      if(v !== getDriveClientId()){ localStorage.setItem('pm_gdrive_client_id', v); localStorage.removeItem('pm_gdrive_folder'); }
+      driveGetToken(true).then(()=>{ renderSettings(); }).catch(()=>{ alert('ההתחברות נכשלה. בדוק את ה-Client ID ואת הכתובת המורשית.'); });
+    };
+    document.getElementById('driveDisconnect').onclick = ()=>{
+      try{ if(driveToken && window.google) google.accounts.oauth2.revoke(driveToken, ()=>{}); }catch(e){}
+      driveToken=null; localStorage.removeItem('pm_gdrive_connected'); localStorage.removeItem('pm_gdrive_folder'); renderSettings();
+    };
     document.getElementById('importBtn').onclick = ()=> document.getElementById('importFile').click();
     document.getElementById('importFile').onchange = (e)=>{
       const file = e.target.files[0];
@@ -2802,6 +2995,10 @@ function openCompanyModal(company, onSaved){
     <input id="coWebsite" value="${isEdit?esc(company.website||''):''}">
     <label>הערות</label>
     <textarea id="coNotes" rows="2">${isEdit?esc(company.notes||''):''}</textarea>
+    <label>אנשי קשר</label>
+    <input id="coCSearch" placeholder="🔍 חיפוש איש קשר..." style="margin-bottom:6px;">
+    <button class="btn small secondary" id="coCNew" type="button">+ איש קשר חדש</button>
+    <div id="coCList" style="margin-top:6px; max-height:200px; overflow:auto;"></div>
     <div class="row" style="margin-top:14px;">
       <button class="btn" id="coSave">שמירה</button>
       <button class="btn secondary" id="coCancel">ביטול</button>
@@ -2812,6 +3009,27 @@ function openCompanyModal(company, onSaved){
   parentSel.innerHTML = `<option value="">ללא</option>` + DATA.companies
     .filter(co => !isEdit || (co.id!==company.id && !isDescendant(co.id, company.id)))
     .map(co=>`<option value="${co.id}" ${isEdit&&company.parentId===co.id?'selected':''}>${esc(companyChainName(co))}</option>`).join('');
+  // contacts: only unassigned ones (plus current members when editing)
+  const origMembers = isEdit ? DATA.contacts.filter(c=>c.companyId===company.id).map(c=>c.id) : [];
+  const picked = new Set(origMembers);
+  function drawCoContacts(){
+    const q = bg.querySelector('#coCSearch').value.trim().toLowerCase();
+    const rows = DATA.contacts
+      .filter(c=> !c.companyId || (isEdit && c.companyId===company.id))
+      .filter(c=> !q || (c.name+' '+(c.role||'')).toLowerCase().includes(q))
+      .sort((a,b)=> a.name.localeCompare(b.name,'he'));
+    bg.querySelector('#coCList').innerHTML = rows.map(c=>`
+      <label class="row" style="justify-content:flex-start; cursor:pointer;">
+        <input type="checkbox" style="width:auto;" data-coc="${c.id}" ${picked.has(c.id)?'checked':''}>
+        ${esc(c.name)} <span class="muted">${esc(c.role||'')}</span>
+      </label>`).join('') || '<div class="muted">אין אנשי קשר פנויים</div>';
+    bg.querySelectorAll('[data-coc]').forEach(cb=>{
+      cb.onchange = ()=>{ if(cb.checked) picked.add(cb.dataset.coc); else picked.delete(cb.dataset.coc); };
+    });
+  }
+  drawCoContacts();
+  bg.querySelector('#coCSearch').oninput = drawCoContacts;
+  bg.querySelector('#coCNew').onclick = ()=> openContactModal(null, (nc)=>{ if(!nc.companyId) picked.add(nc.id); drawCoContacts(); });
   bg.querySelector('#coCancel').onclick = ()=> closeModal(bg);
   bg.querySelector('#coSave').onclick = ()=>{
     const name = bg.querySelector('#coName').value.trim();
@@ -2824,6 +3042,10 @@ function openCompanyModal(company, onSaved){
     let result;
     if(isEdit){ Object.assign(company, vals); result = company; }
     else { result = {id: uid(), ...vals}; DATA.companies.push(result); }
+    DATA.contacts.forEach(c=>{
+      if(picked.has(c.id) && (!c.companyId || c.companyId===result.id)) c.companyId = result.id;
+      else if(c.companyId===result.id && !picked.has(c.id)) c.companyId = '';
+    });
     save(); closeModal(bg); render();
     if(onSaved) onSaved(result);
   };
