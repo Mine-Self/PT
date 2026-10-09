@@ -112,6 +112,9 @@
   .accordion-arrow{transition:transform 140ms ease;}
   .accordion-body{overflow:hidden; max-height:0; transition:max-height 160ms ease;}
   .accordion-body.open{max-height:2000px;}
+  :root[data-theme="dark"] input[type="date"]::-webkit-calendar-picker-indicator,
+  :root[data-theme="dark"] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+  :root[data-theme="dark"] input[type="time"]::-webkit-calendar-picker-indicator{ filter:invert(1); opacity:.9; }
 </style>
 <style id="theme-shadcn">
   /* shadcn/ui-style tokens (zinc) */
@@ -210,7 +213,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-09_0627';
+const APP_VERSION = '2026-10-09_0714';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -3321,7 +3324,7 @@ function openCalendarPicker(inp){
     for(let d=1; d<=days; d++){
       const isSel = sel && sel.y===view.y && sel.m===view.m && sel.d===d;
       const isToday = now.getFullYear()===view.y && now.getMonth()===view.m && now.getDate()===d;
-      html += `<button type="button" data-day="${d}" style="border:${isToday&&!isSel?'1px solid var(--accent)':'1px solid transparent'}; border-radius:50%; width:100%; aspect-ratio:1; padding:0; font:inherit; cursor:pointer; ${isSel?'background:var(--accent); color:#fff;':'background:transparent; color:inherit;'}">${d}</button>`;
+      html += `<button type="button" data-day="${d}" style="border:${isToday&&!isSel?'1px solid var(--accent)':'1px solid transparent'}; border-radius:50%; width:100%; aspect-ratio:1; padding:0; font:inherit; cursor:pointer; ${isSel?'background:var(--primary); color:var(--on-primary); font-weight:700;':'background:transparent; color:inherit;'}">${d}</button>`;
     }
     bg.querySelector('#calGrid').innerHTML = html;
     bg.querySelectorAll('[data-day]').forEach(b=> b.onclick = ()=>{ sel = {y:view.y, m:view.m, d:+b.dataset.day}; draw(); });
