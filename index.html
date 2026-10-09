@@ -210,7 +210,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-07_1115';
+const APP_VERSION = '2026-10-09_0627';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -3281,6 +3281,72 @@ function advanceReminder(r){
   }
   r.datetime = toLocalInputValue(d);
 }
+
+/* ---------- Calendar date picker (replaces native date wheels) ---------- */
+function openCalendarPicker(inp){
+  const withTime = inp.type==='datetime-local';
+  const pad = n=>String(n).padStart(2,'0');
+  const now = new Date();
+  const m0 = (inp.value||'').match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?/);
+  let sel = m0 ? {y:+m0[1], m:+m0[2]-1, d:+m0[3]} : null;
+  let view = {y: sel?sel.y:now.getFullYear(), m: sel?sel.m:now.getMonth()};
+  const timeDef = (m0 && m0[4]) ? `${m0[4]}:${m0[5]}` : `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const bg = openModalEl(`
+    <div id="calHead" style="font-size:26px; font-weight:700; margin-bottom:6px;"></div>
+    <div class="row" style="justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <button class="icon-btn" id="calPrev" type="button" aria-label="חודש קודם">›</button>
+      <b id="calTitle"></b>
+      <button class="icon-btn" id="calNext" type="button" aria-label="חודש הבא">‹</button>
+    </div>
+    <div id="calGrid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px; text-align:center;"></div>
+    ${withTime?`<label>שעה</label><input id="calTime" type="time" value="${timeDef}">`:''}
+    <div class="row" style="margin-top:14px;">
+      <button class="btn" id="calOk" type="button">אישור</button>
+      <button class="btn secondary" id="calToday" type="button">היום</button>
+      <button class="btn secondary" id="calClear" type="button">נקה</button>
+      <button class="btn secondary" id="calCancel" type="button">ביטול</button>
+    </div>
+  `, {center:true});
+  const first = getFirstDay();
+  function draw(){
+    const title = new Intl.DateTimeFormat('he',{month:'long',year:'numeric'}).format(new Date(view.y, view.m, 1));
+    bg.querySelector('#calTitle').textContent = title;
+    bg.querySelector('#calHead').textContent = sel ? new Intl.DateTimeFormat('he',{weekday:'short',day:'numeric',month:'short',year:'numeric'}).format(new Date(sel.y, sel.m, sel.d)) : 'בחר תאריך';
+    const wd = ['א','ב','ג','ד','ה','ו','ש'];
+    let html = '';
+    for(let i=0;i<7;i++) html += `<div class="muted" style="padding:4px 0;">${wd[(first+i)%7]}</div>`;
+    const lead = (new Date(view.y, view.m, 1).getDay() - first + 7) % 7;
+    const days = new Date(view.y, view.m+1, 0).getDate();
+    for(let i=0;i<lead;i++) html += '<div></div>';
+    for(let d=1; d<=days; d++){
+      const isSel = sel && sel.y===view.y && sel.m===view.m && sel.d===d;
+      const isToday = now.getFullYear()===view.y && now.getMonth()===view.m && now.getDate()===d;
+      html += `<button type="button" data-day="${d}" style="border:${isToday&&!isSel?'1px solid var(--accent)':'1px solid transparent'}; border-radius:50%; width:100%; aspect-ratio:1; padding:0; font:inherit; cursor:pointer; ${isSel?'background:var(--accent); color:#fff;':'background:transparent; color:inherit;'}">${d}</button>`;
+    }
+    bg.querySelector('#calGrid').innerHTML = html;
+    bg.querySelectorAll('[data-day]').forEach(b=> b.onclick = ()=>{ sel = {y:view.y, m:view.m, d:+b.dataset.day}; draw(); });
+  }
+  const shift = n=>{ view.m += n; if(view.m<0){ view.m=11; view.y--; } else if(view.m>11){ view.m=0; view.y++; } draw(); };
+  bg.querySelector('#calPrev').onclick = ()=> shift(-1);
+  bg.querySelector('#calNext').onclick = ()=> shift(1);
+  bg.querySelector('#calToday').onclick = ()=>{ sel = {y:now.getFullYear(), m:now.getMonth(), d:now.getDate()}; view = {y:sel.y, m:sel.m}; draw(); };
+  const fire = ()=>{ inp.dispatchEvent(new Event('input',{bubbles:true})); inp.dispatchEvent(new Event('change',{bubbles:true})); };
+  bg.querySelector('#calClear').onclick = ()=>{ inp.value=''; closeModal(bg); fire(); };
+  bg.querySelector('#calCancel').onclick = ()=> closeModal(bg);
+  bg.querySelector('#calOk').onclick = ()=>{
+    if(!sel){ alert('נא לבחור תאריך'); return; }
+    let v = `${sel.y}-${pad(sel.m+1)}-${pad(sel.d)}`;
+    if(withTime) v += 'T' + (bg.querySelector('#calTime').value || '09:00');
+    inp.value = v; closeModal(bg); fire();
+  };
+  draw();
+}
+document.addEventListener('click', (e)=>{
+  const t = e.target;
+  if(t && t.tagName==='INPUT' && (t.type==='date' || t.type==='datetime-local') && !t.disabled && !t.readOnly){
+    e.preventDefault(); t.blur(); openCalendarPicker(t);
+  }
+}, true);
 
 function toLocalInputValue(d){
   const pad = n=>String(n).padStart(2,'0');
