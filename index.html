@@ -213,7 +213,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-11_1052';
+const APP_VERSION = '2026-10-11_1348';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -2781,7 +2781,8 @@ function openFocusModal(itemId, project, opts){
     ${item.desc?`<div class="muted" style="white-space:pre-wrap;">${esc(item.desc)}</div>`:''}
     ${item.location?`<div class="muted" style="margin-top:6px;">📍 ${esc(item.location)}</div>`:''}
     ${item.due?`<div class="muted" style="margin-top:6px;">⏰ ${fmtDate(item.due)}${item.recurrence!=='none'?` · 🔁 ${recLabel(item.recurrence)}`:''}</div>`:''}
-    ${(item.reminders||[]).length?'<div id="fcRems" style="margin-top:4px;"></div>':''}
+    <div id="fcRems" style="margin-top:4px;"></div>
+    <button class="btn small secondary" id="fcAddRem" style="margin-top:6px;">🔔 + הוסף תזכורת</button>
     ${item.contactIds && item.contactIds.length?`<div style="margin-top:8px;">${renderContactChips(item.contactIds)}</div>`:''}
     ${primary?`<div class="muted" style="margin-top:4px;">⭐ איש קשר ראשי: ${esc(primary.name)}</div>`:''}
 
@@ -2850,6 +2851,24 @@ function openFocusModal(itemId, project, opts){
     });
   }
   drawReminders();
+  bg.querySelector('#fcAddRem').onclick = ()=>{
+    const def = toLocalInputValue(new Date(Date.now()+3600000));
+    const rb = openModalEl(`<h2>🔔 תזכורת חדשה</h2>
+      <label>תאריך ושעה</label>
+      <input id="frAt" type="datetime-local" value="${def}">
+      <label>חזרה</label>
+      <select id="frRec">${[['none','ללא'],['daily','יומי'],['weekly','שבועי'],['monthly','חודשי'],['workdays','ימי עבודה'],['weekend','סוף שבוע']].map(([v,l])=>`<option value="${v}">${l}</option>`).join('')}</select>
+      <div class="row" style="margin-top:12px;"><button class="btn" id="frOk">הוסף</button><button class="btn secondary" id="frNo">ביטול</button></div>`, {center:true});
+    rb.querySelector('#frNo').onclick = ()=> closeModal(rb);
+    rb.querySelector('#frOk').onclick = ()=>{
+      const val = rb.querySelector('#frAt').value;
+      if(!val || new Date(val) <= new Date()){ alert('נא לבחור זמן עתידי'); return; }
+      const t = rb.querySelector('#frRec').value;
+      item.reminders = item.reminders || [];
+      item.reminders.push({id:uid(), datetime:val, notified:false, acked:false, recurring:t!=='none', recType:t==='none'?'daily':t, customDays:[]});
+      save(); closeModal(rb); drawReminders(); render();
+    };
+  };
   let showAllUpd = false;
   function drawUpdates(){
     const all = updatesSorted(item);
