@@ -1,9 +1,10 @@
-const CACHE_NAME = 'proj-manager-cache-v25';
+const CACHE_NAME = 'proj-manager-cache-v26';
 const FILES_TO_CACHE = [
   './',
   './index.html',
   './manifest.json',
   './icon-192.png',
+  './badge-96.png',
   './icon-512.png',
   './icon-maskable-512.png'
 ];

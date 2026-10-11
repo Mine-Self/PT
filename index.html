@@ -213,7 +213,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-09_0714';
+const APP_VERSION = '2026-10-11_1026';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -539,7 +539,7 @@ function fireDocNotification(doc){
   const n = docDaysLeft(doc);
   const when = n===0 ? 'היום' : (n===1 ? 'מחר' : `בעוד ${n} ימים`);
   const title = `📄 תוקף מסמך: ${doc.name}`;
-  const opts = { body: `פג תוקף ${when} (${fmtYmd(doc.expiry)})`, icon:'icon-192.png', badge:'icon-192.png', tag:'doc-'+doc.id, data:{ docId: doc.id } };
+  const opts = { body: `פג תוקף ${when} (${fmtYmd(doc.expiry)})`, icon:'icon-192.png', badge:'badge-96.png', tag:'doc-'+doc.id, data:{ docId: doc.id } };
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
   } else if('Notification' in window && Notification.permission==='granted'){
@@ -1077,7 +1077,7 @@ function updateBackupBanner(){
   const today = new Date().toDateString();
   if('Notification' in window && Notification.permission==='granted' && localStorage.getItem('pm_backup_notified')!==today){
     localStorage.setItem('pm_backup_notified', today);
-    const opts = { body:'הגיע הזמן לגבות את המידע', icon:'icon-192.png', badge:'icon-192.png', tag:'backup-reminder' };
+    const opts = { body:'הגיע הזמן לגבות את המידע', icon:'icon-192.png', badge:'badge-96.png', tag:'backup-reminder' };
     if('serviceWorker' in navigator && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title:'💾 גיבוי', options: opts});
     else { try{ new Notification('💾 גיבוי', opts); }catch(e){} }
   }
@@ -3241,7 +3241,7 @@ function updateBanner(){
 function fireNotification(item, project, tag){
   const title = `⏰ ${item.title}`;
   const body = `פרויקט: ${project.name}`;
-  const opts = { body, icon:'icon-192.png', badge:'icon-192.png', tag: tag||item.id, data: { itemId: item.id, projectId: project.id },
+  const opts = { body, icon:'icon-192.png', badge:'badge-96.png', tag: tag||item.id, data: { itemId: item.id, projectId: project.id },
     actions: [{action:'snooze15', title:'⏰ דחה 15 דק׳'}, {action:'snooze60', title:'⏰ דחה שעה'}] };
   if('serviceWorker' in navigator && navigator.serviceWorker.controller){
     navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
