@@ -213,7 +213,7 @@ function loadData(){
 /* ================= App version ================= */
 /* Bumped by Claude on every file update - same timestamp used in the delivered zip filename.
    If this number doesn't change after you refresh, the browser is still serving a cached copy. */
-const APP_VERSION = '2026-10-11_1026';
+const APP_VERSION = '2026-10-11_1052';
 
 let DATA = loadData();
 if(!DATA.companies) DATA.companies = [];
@@ -1935,7 +1935,7 @@ function renderDashboard(){
     </div>
 
     <div class="card">
-      <h3>🔥 הכי דחופות</h3>
+      <div class="item-head"><h3>🔥 הכי דחופות</h3><button class="btn small secondary" id="refreshNotifBtn" type="button">🔔 רענן התראות</button></div>
       ${topUrgent.length===0?'<div class="muted">אין משימות דחופות כרגע 🎉</div>':''}
       ${topUrgent.map(({item,project,when})=>`
         <div class="row" data-goto-proj="${project.id}" data-goto-item="${item.id}" style="justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border); cursor:pointer;">
@@ -3394,6 +3394,39 @@ function checkNotifications(){
   if(changed){ save(); render(); }
 }
 
+async function refreshNotifications(){
+  if(!('Notification' in window) || Notification.permission!=='granted'){ alert('ההתראות לא מאושרות. אשר אותן בהגדרות.'); return; }
+  const reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null;
+  if(reg && reg.getNotifications){
+    try{ (await reg.getNotifications()).forEach(n=> n.close()); }catch(e){}
+  }
+  const now = new Date();
+  let open = 0, overdue = 0;
+  const list = [];
+  for(const {item, project, effDone} of collectAllItemsWithEffDone()){
+    if(effDone) continue;
+    open++;
+    const eff = itemEffectiveDue(item);
+    if(eff && eff <= now){ list.push({item, project, eff}); overdue++; }
+  }
+  list.sort((a,b)=> b.eff - a.eff); // most urgent ends up newest, so it stays on top
+  for(const {item, project} of list){
+    fireNotification(item, project, 'open-'+item.id);
+    await new Promise(r=> setTimeout(r, 120));
+  }
+  const title = `📋 ${open} משימות פתוחות`;
+  const opts = { body: overdue ? `${overdue} מהן עברו את המועד. לחץ למעבר לדשבורד.` : 'לחץ למעבר לדשבורד.', icon:'icon-192.png', badge:'badge-96.png', tag:'open-summary', data:{ summary:true } };
+  if('serviceWorker' in navigator && navigator.serviceWorker.controller){
+    navigator.serviceWorker.controller.postMessage({type:'SHOW_NOTIFICATION', title, options: opts});
+  } else {
+    try{ const n = new Notification(title, opts); n.onclick = ()=>{ window.focus(); goToTab('dashboard'); n.close(); }; }catch(e){}
+  }
+}
+document.addEventListener('click', (e)=>{
+  const b = e.target && e.target.closest && e.target.closest('#refreshNotifBtn');
+  if(b){ b.disabled = true; refreshNotifications().finally(()=>{ b.disabled = false; }); }
+});
+
 function navigateToItem(projectId, itemId){
   currentTab = 'projects';
   currentProjectId = projectId;
@@ -3406,6 +3439,9 @@ function handleDeepLinkFromUrl(){
   const params = new URLSearchParams(window.location.search);
   const pid = params.get('project'), iid = params.get('item');
   const sn = parseInt(params.get('snooze')||'0',10);
+  if(params.get('dash')){
+    deepLinked = true; goToTab('dashboard'); history.replaceState({}, '', window.location.pathname); return;
+  }
   if(params.get('docs')){
     deepLinked = true; goToTab('docs'); history.replaceState({}, '', window.location.pathname); return;
   }
@@ -3429,6 +3465,8 @@ if(navigator.serviceWorker && navigator.serviceWorker.addEventListener){
       snoozeItem(d.projectId, d.itemId, d.minutes || 15);
     } else if(d.type==='OPEN_DOCS'){
       goToTab('docs');
+    } else if(d.type==='OPEN_DASHBOARD'){
+      goToTab('dashboard');
     }
   });
 }

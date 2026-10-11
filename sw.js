@@ -1,4 +1,4 @@
-const CACHE_NAME = 'proj-manager-cache-v26';
+const CACHE_NAME = 'proj-manager-cache-v27';
 const FILES_TO_CACHE = [
   './',
   './index.html',
@@ -60,6 +60,23 @@ self.addEventListener('notificationclick', (evt) => {
         if (self.clients.openWindow) {
           return self.clients.openWindow(`./index.html?snooze=${minutes}&project=${encodeURIComponent(data.projectId)}&item=${encodeURIComponent(data.itemId)}`);
         }
+      })
+    );
+    return;
+  }
+
+  // Summary notification: open the dashboard.
+  if (data.summary) {
+    evt.waitUntil(
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+        for (const client of list) {
+          if ('focus' in client) {
+            client.focus();
+            client.postMessage({ type: 'OPEN_DASHBOARD' });
+            return;
+          }
+        }
+        if (self.clients.openWindow) return self.clients.openWindow('./index.html?dash=1');
       })
     );
     return;
